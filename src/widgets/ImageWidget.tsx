@@ -61,7 +61,6 @@ export function DynamicImageWidget(w: Widget): JSX.Element {
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
-  const [hovered, setHovered] = useState(false);
   const [frame, setFrame] = useState(0);
 
   // Phase 1: resolve best URL — Wikipedia first, loremflickr fallback.
@@ -106,8 +105,6 @@ export function DynamicImageWidget(w: Widget): JSX.Element {
   return (
     <figure
       className="relative flex h-full flex-col gap-1 overflow-hidden"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
     >
       {/* Spinner overlay — visible until the <img> fires onLoad */}
       {!loaded && (
@@ -136,10 +133,7 @@ export function DynamicImageWidget(w: Widget): JSX.Element {
             className="h-full w-full object-cover"
             style={{
               opacity: loaded ? 1 : 0,
-              transition: "opacity 300ms ease-out, filter 300ms ease-out",
-              filter: hovered
-                ? "grayscale(0%) contrast(100%) brightness(100%)"
-                : "grayscale(100%) contrast(115%) brightness(90%)",
+              transition: "opacity 300ms ease-out",
             }}
             onLoad={() => setLoaded(true)}
             onError={() => setError(true)}
