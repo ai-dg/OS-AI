@@ -94,6 +94,9 @@ The entire app is driven by a **single JSON contract** between Claude and the ca
 - `.claude/docs/AI_CONTRACT.md` — Claude system prompt and full JSON schema
 - `.claude/docs/DEMO_SCRIPT.md` — 7-step demo mode and keyboard shortcuts
 - `.claude/docs/ANIMATIONS.md` — every transition spec in one place
+## Committing
+When making commits, follow `.claude/commit-policy.md` — Conventional Commits format, no co-author lines, ask before committing autonomously.
+
 ## Setup
 
 This project uses the [ECC plugin](https://github.com/affaan-m/ECC) for Claude Code. To get started:
