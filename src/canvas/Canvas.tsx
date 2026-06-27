@@ -1,6 +1,12 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useCanvasStore } from "@/store/canvasStore";
 import { WIDGETS } from "@/widgets/registry";
+import { ChatBox } from "@/components/ChatBox";
+
+interface CanvasProps {
+  onSubmit: (text: string) => void;
+  isThinking: boolean;
+}
 
 /**
  * The full-screen black canvas (#080808). It fills 100vw x 100vh, has no chrome
@@ -9,7 +15,7 @@ import { WIDGETS } from "@/widgets/registry";
  * gives spatial depth. Widgets sit on an inner layer that scales with the
  * camera; the grid on the parent stays fixed so it never distorts on zoom.
  */
-export function Canvas() {
+export function Canvas({ onSubmit, isThinking }: CanvasProps) {
   const widgets = useCanvasStore((s) => s.widgets);
   const order = useCanvasStore((s) => s.order);
   const cameraScale = useCanvasStore((s) => s.cameraScale);
@@ -53,6 +59,7 @@ export function Canvas() {
           })}
         </AnimatePresence>
       </motion.div>
+      <ChatBox onSubmit={onSubmit} isThinking={isThinking} />
     </div>
   );
 }

@@ -111,7 +111,10 @@ export default function App() {
 
   return (
     <div className="relative h-full w-full select-none">
-      <Canvas />
+      <Canvas
+        onSubmit={handleUtterance}
+        isThinking={status === "thinking" || status === "speaking"}
+      />
       <ConversationTree />
       <Ticker sentence={interim || ticker} />
 
