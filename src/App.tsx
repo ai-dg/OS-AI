@@ -4,6 +4,7 @@ import { Canvas } from "@/canvas/Canvas";
 import { ResponseBox } from "@/components/ResponseBox";
 import { ProjectLabel } from "@/components/ProjectLabel";
 import { ConversationTree } from "@/tree/ConversationTree";
+import { JarvisOrb } from "@/components/JarvisOrb";
 import { useSpeechRecognition } from "@/voice/useSpeech";
 import { converse } from "@/ai/converse";
 import { hasApiKey } from "@/ai/client";
@@ -46,6 +47,7 @@ export default function App() {
 
   const clearCanvas   = useCanvasStore((s) => s.clear);
   const snapshot      = useCanvasStore((s) => s.snapshot);
+  const widgetCount   = useCanvasStore((s) => s.order.length);
   const commit        = useTreeStore((s) => s.commit);
   const isSwitching   = useProjectStore((s) => s.isSwitching);
   const switchProject = useProjectStore((s) => s.switchProject);
@@ -127,7 +129,7 @@ export default function App() {
     }
   }, [speak, commit, snapshot, doSwitch, saveProject, projects]);
 
-  const { supported, listening, start, stop } =
+  const { supported, listening, start, stop, levelRef } =
     useSpeechRecognition(handleUtterance);
 
   useEffect(() => {
@@ -135,18 +137,20 @@ export default function App() {
   }, [listening]);
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
-  // Space = PTT  |  Escape = clear canvas  |  Cmd/Ctrl+1/2/3 = switch project
+  // Space = PTT  |  Escape = clear canvas  |  Alt+1/2/3 = switch project
+  // Alt+digit is used (not Ctrl+digit) because Ctrl+1/2/3 is reserved by the
+  // browser for tab-switching on Linux/Windows. e.code is layout-independent.
   useEffect(() => {
     const isTyping = (el: EventTarget | null) =>
       el instanceof HTMLElement &&
       (el.tagName === "INPUT" || el.tagName === "TEXTAREA");
 
     const down = (e: KeyboardEvent) => {
-      // Cmd/Ctrl+1-3 → switch project
-      if ((e.metaKey || e.ctrlKey) && ["1", "2", "3"].includes(e.key)) {
+      // Alt+1-3 → switch project
+      if (e.altKey && ["Digit1", "Digit2", "Digit3"].includes(e.code)) {
         e.preventDefault();
         const ids = Object.keys(useProjectStore.getState().projects);
-        const targetId = ids[parseInt(e.key) - 1];
+        const targetId = ids[parseInt(e.code.slice(-1), 10) - 1];
         if (targetId && targetId !== useProjectStore.getState().activeProjectId) {
           doSwitch(targetId);
         }
@@ -179,17 +183,21 @@ export default function App() {
       <Canvas
         onSubmit={handleUtterance}
         isThinking={status === "thinking" || status === "speaking"}
+        voiceLevelRef={levelRef}
       />
       <ProjectLabel />
       <ConversationTree />
       <ResponseBox text={responseText} shown={responseShown} />
 
-      {/* Mic / status orb — elevated above the 80px ConversationTree strip */}
+      {/* Mic / status orb — only during a conversation; the home page shows the
+          full-screen hero orb instead, so the small one is hidden there. */}
       <div className="fixed inset-x-0 bottom-[96px] z-30 flex flex-col items-center gap-3">
-        <StatusOrb status={status} />
+        {widgetCount > 0 && (
+          <StatusOrb status={status} inConversation levelRef={levelRef} />
+        )}
         <p className="text-xs text-gray-500">
           {supported
-            ? "Hold Space · Esc clear · ⌘1/2/3 switch project"
+            ? "Hold Space · Esc clear · Alt+1/2/3 switch project"
             : "Speech recognition not supported in this browser"}
         </p>
       </div>
@@ -205,26 +213,48 @@ export default function App() {
 
 // ── Status orb ────────────────────────────────────────────────────────────────
 
-function StatusOrb({ status }: { status: Status }) {
-  const color =
-    status === "switching"
-      ? "bg-violet-400"
-      : status === "listening"
-        ? "bg-sky-400"
-        : status === "thinking"
-          ? "bg-amber-400"
-          : status === "speaking"
-            ? "bg-emerald-400"
-            : "bg-gray-600";
-  const pulse = status !== "idle";
+// Voice-status → orb tint. Idle stays teal but dim; active states brighten
+// and shift hue so the mic indicator reads at a glance.
+const STATUS_COLOR: Record<Status, [number, number, number]> = {
+  idle:      [45, 212, 191],  // teal
+  listening: [56, 189, 248],  // sky
+  thinking:  [251, 191, 36],  // amber
+  speaking:  [52, 211, 153],  // emerald
+  switching: [167, 139, 250], // violet
+};
+
+function StatusOrb({
+  status,
+  inConversation = false,
+  levelRef,
+}: {
+  status: Status;
+  inConversation?: boolean;
+  levelRef?: { current: number };
+}) {
+  const color = STATUS_COLOR[status];
+  // During a conversation the idle hero orb is gone, so the small mic needs a
+  // floor of brightness + a ringed backdrop to stay clearly visible over widgets.
+  const intensity = status === "idle" ? (inConversation ? 0.85 : 0.55) : 1;
+  const [r, g, b] = color;
+  const size = inConversation ? 92 : 80;
+
   return (
-    <div className="relative flex h-16 w-16 items-center justify-center">
-      {pulse && (
-        <span
-          className={`absolute h-16 w-16 animate-ping rounded-full ${color} opacity-30`}
-        />
-      )}
-      <span className={`h-5 w-5 rounded-full ${color} transition-colors`} />
+    <div
+      className="relative flex items-center justify-center rounded-full transition-all duration-300"
+      style={{
+        height: size + 16,
+        width: size + 16,
+        ...(inConversation
+          ? {
+              background: `radial-gradient(circle, rgba(${r},${g},${b},0.08) 0%, transparent 70%)`,
+              border: `1px solid rgba(${r},${g},${b},0.25)`,
+              boxShadow: `0 0 24px rgba(${r},${g},${b},0.20)`,
+            }
+          : {}),
+      }}
+    >
+      <JarvisOrb size={size} color={color} intensity={intensity} levelRef={levelRef} />
     </div>
   );
 }

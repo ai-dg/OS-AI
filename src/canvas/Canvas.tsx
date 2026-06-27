@@ -2,12 +2,15 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useCanvasStore } from "@/store/canvasStore";
 import { WIDGETS } from "@/widgets/registry";
 import { ChatBox } from "@/components/ChatBox";
+import { JarvisOrb } from "@/components/JarvisOrb";
 import { triggerMockGmailMCPResponse } from "@/ai/gmailMCP";
 import type { Widget } from "@/widgets/types";
 
 interface CanvasProps {
   onSubmit: (text: string) => void;
   isThinking: boolean;
+  /** Live mic amplitude (0–1) so the idle hero orb reacts to the voice. */
+  voiceLevelRef?: { current: number };
 }
 
 // ─── Connecting-arrow SVG overlay ─────────────────────────────────────────────
@@ -202,7 +205,7 @@ function DemoController() {
   if (visible.length === 0) return null;
 
   return (
-    <div className="absolute bottom-[96px] left-1/2 z-[1000] flex -translate-x-1/2 items-stretch overflow-hidden border border-zinc-800 bg-zinc-950/90 backdrop-blur-sm">
+    <div className="fixed right-4 top-4 z-[1000] flex items-stretch overflow-hidden border border-zinc-800 bg-zinc-950/90 backdrop-blur-sm">
       <CamBtn
         active={cameraMode === "zoom"}
         disabled={!zoomId}
@@ -248,7 +251,7 @@ function DemoController() {
  *   tx = W·S·(0.5 − cx)
  *   ty = H·S·(0.5 − cy)
  */
-export function Canvas({ onSubmit, isThinking }: CanvasProps) {
+export function Canvas({ onSubmit, isThinking, voiceLevelRef }: CanvasProps) {
   const widgets        = useCanvasStore((s) => s.widgets);
   const order          = useCanvasStore((s) => s.order);
   const cameraMode     = useCanvasStore((s) => s.cameraMode);
@@ -275,6 +278,30 @@ export function Canvas({ onSubmit, isThinking }: CanvasProps) {
       className="canvas-bg relative overflow-hidden"
       style={{ width: "100vw", height: "100vh" }}
     >
+      {/* ── Default / idle page — JARVIS orb when the canvas is empty ───────── */}
+      <AnimatePresence>
+        {order.length === 0 && (
+          <motion.div
+            key="idle-hero"
+            className="pointer-events-none absolute inset-0 z-[1] flex flex-col items-center justify-center gap-8"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.6, ease: "easeOut" }}
+          >
+            <JarvisOrb
+              size={Math.round(
+                Math.min(window.innerWidth, window.innerHeight) * 0.62,
+              )}
+              levelRef={voiceLevelRef}
+            />
+            <p className="select-none font-mono text-[11px] tracking-[0.35em] text-teal-300/40">
+              HOLD SPACE TO SPEAK
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ── Camera transform layer ─────────────────────────────────────────── */}
       <motion.div
         className="absolute inset-0"
