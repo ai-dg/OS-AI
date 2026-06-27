@@ -441,6 +441,105 @@ const CircleStatWidget: Renderer = (w) => {
   );
 };
 
+const TableWidget: Renderer = (w) => {
+  const title   = s(w.data.title);
+  const headers = list(w.data.headers);
+  const rows    = Array.isArray(w.data.rows)
+    ? (w.data.rows as unknown[]).map((r) => (Array.isArray(r) ? r.map(String) : []))
+    : [];
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      {title && (
+        <div className="shrink-0 border-b border-zinc-800 px-3 py-2">
+          <span className="select-none font-mono text-[10px] text-zinc-600">// </span>
+          <span className="font-mono text-xs font-semibold text-zinc-100">{title}</span>
+        </div>
+      )}
+      <div className="min-h-0 flex-1 overflow-auto">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr>
+              {headers.map((h, i) => (
+                <th
+                  key={i}
+                  className="sticky top-0 border-b border-zinc-800 bg-zinc-950 px-3 py-1.5 text-left font-mono text-[10px] uppercase tracking-widest text-zinc-600"
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, ri) => (
+              <tr key={ri} className="border-b border-zinc-900/60 hover:bg-white/[0.02]">
+                {row.map((cell, ci) => (
+                  <td
+                    key={ci}
+                    className="px-3 py-1.5 font-mono text-xs tabular-nums text-zinc-300"
+                  >
+                    {cell}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+const STATUS_COLOR: Record<string, string> = {
+  ok:    "#10b981",
+  warn:  "#f59e0b",
+  error: "#ef4444",
+  info:  "#6366f1",
+};
+
+const ListWidget: Renderer = (w) => {
+  const title = s(w.data.title);
+  const items = Array.isArray(w.data.items)
+    ? (w.data.items as Record<string, unknown>[])
+    : [];
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      {title && (
+        <div className="shrink-0 border-b border-zinc-800 px-3 py-2">
+          <span className="select-none font-mono text-[10px] text-zinc-600">// </span>
+          <span className="font-mono text-xs font-semibold text-zinc-100">{title}</span>
+        </div>
+      )}
+      <ul className="min-h-0 flex-1 overflow-auto divide-y divide-zinc-900/60">
+        {items.map((item, i) => {
+          const label  = s(item.label);
+          const value  = s(item.value);
+          const status = s(item.status);
+          const dot    = STATUS_COLOR[status];
+
+          return (
+            <li key={i} className="flex items-center gap-2.5 px-3 py-2">
+              {dot && (
+                <span
+                  className="shrink-0 h-1.5 w-1.5 rounded-full"
+                  style={{ backgroundColor: dot }}
+                />
+              )}
+              <span className="flex-1 font-mono text-xs text-zinc-300">{label}</span>
+              {value && (
+                <span className="shrink-0 font-mono text-xs tabular-nums text-zinc-500">
+                  {value}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+};
+
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
 export const WIDGETS: Record<WidgetType, Renderer> = {
@@ -465,4 +564,6 @@ export const WIDGETS: Record<WidgetType, Renderer> = {
   "image-widget":     DynamicImageWidget,
   "network-graph":    NetworkGraphWidget,
   "circle-stat":      CircleStatWidget,
+  "table-widget":     TableWidget,
+  "list-widget":      ListWidget,
 };
