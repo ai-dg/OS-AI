@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useTreeStore, type TreeNode } from "@/store/treeStore";
 import { useCanvasStore } from "@/store/canvasStore";
@@ -7,11 +7,12 @@ import type { Widget } from "@/widgets/types";
 
 // ── Strip geometry ─────────────────────────────────────────────────────────────
 
-const STRIP_H  = 80;
-const MARGIN_L = 52;   // px from strip left to first node centre
-const NODE_GAP = 88;   // px between adjacent node centres
-const NODE_R   = 8;    // node radius → 16px diameter
-const ROW_Y    = [30, 56] as const; // y-centre (px) for row 0 and row 1
+const STRIP_H   = 80;
+const MAX_BAR_W = 480;
+const MARGIN_L  = 52;   // px from strip left to first node centre
+const NODE_GAP  = 88;   // px between adjacent node centres
+const NODE_R    = 8;    // node radius → 16px diameter
+const ROW_Y     = [30, 56] as const; // y-centre (px) for row 0 and row 1
 
 // ── DFS layout ────────────────────────────────────────────────────────────────
 // Assigns each node a (col, row). First child stays on same row; subsequent
@@ -165,6 +166,8 @@ export function ConversationTree() {
   const canvasRestore = useCanvasStore((s) => s.restore);
 
   const [navigating, setNavigating] = useState(false);
+  const [popupOpen,  setPopupOpen]  = useState(false);
+  const popupContainerRef = useRef<HTMLDivElement>(null);
 
   // Seed mock history once if tree starts empty.
   useEffect(() => {
@@ -177,6 +180,21 @@ export function ConversationTree() {
     () => Object.values(nodes).sort((a, b) => a.createdAt - b.createdAt),
     [nodes],
   );
+
+  // Close popup on outside click.
+  useEffect(() => {
+    if (!popupOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        popupContainerRef.current &&
+        !popupContainerRef.current.contains(e.target as Node)
+      ) {
+        setPopupOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [popupOpen]);
 
   // Time-travel: blank canvas → 240ms fade → restore saved snapshot.
   const travel = useCallback(
@@ -194,16 +212,152 @@ export function ConversationTree() {
 
   if (nodeList.length === 0) return null;
 
-  const maxCol = Math.max(...Object.values(layout).map((p) => p.col), 0);
-  const svgW   = Math.max(
-    typeof window !== "undefined" ? window.innerWidth : 1280,
-    MARGIN_L + maxCol * NODE_GAP + 100,
-  );
+  const maxCol     = Math.max(...Object.values(layout).map((p) => p.col), 0);
+  const neededW    = MARGIN_L + maxCol * NODE_GAP + NODE_R + 20;
+  const isCollapsed = neededW > MAX_BAR_W;
+  const barWidth   = Math.min(neededW, MAX_BAR_W);
 
   const activePos  = currentId ? layout[currentId] : undefined;
   const activeNode = currentId ? nodes[currentId]  : undefined;
   const activeXY   = activePos ? toXY(activePos)   : undefined;
 
+  // ── Collapsed pill + popup ───────────────────────────────────────────────────
+  if (isCollapsed) {
+    return (
+      <div
+        ref={popupContainerRef}
+        style={{
+          position:             "fixed",
+          bottom:               0,
+          left:                 0,
+          zIndex:               2000,
+          height:               STRIP_H,
+          display:              "flex",
+          alignItems:           "center",
+          padding:              "0 16px",
+          background:           "rgba(0,0,0,0.65)",
+          backdropFilter:       "blur(24px)",
+          WebkitBackdropFilter: "blur(24px)",
+          borderTop:            "1px solid rgba(255,255,255,0.06)",
+          borderRight:          "1px solid rgba(255,255,255,0.06)",
+          borderRadius:         "0 8px 0 0",
+        }}
+      >
+        {/* Pill toggle */}
+        <button
+          onClick={() => setPopupOpen((o) => !o)}
+          style={{
+            display:        "flex",
+            alignItems:     "center",
+            gap:            6,
+            background:     popupOpen
+              ? "rgba(255,255,255,0.10)"
+              : "rgba(255,255,255,0.06)",
+            border:         "1px solid rgba(255,255,255,0.12)",
+            borderRadius:   20,
+            color:          "rgba(255,255,255,0.75)",
+            fontFamily:     "'JetBrains Mono', 'Fira Code', monospace",
+            fontSize:       11,
+            padding:        "5px 12px",
+            cursor:         "pointer",
+            transition:     "background 300ms ease-out, border-color 300ms ease-out",
+            outline:        "none",
+          }}
+        >
+          <span style={{ fontSize: 12, lineHeight: 1 }}>⬡</span>
+          <span>{nodeList.length} nodes</span>
+        </button>
+
+        {/* Floating popup */}
+        {popupOpen && (
+          <div
+            style={{
+              position:             "absolute",
+              bottom:               STRIP_H + 8,
+              left:                 0,
+              minWidth:             280,
+              maxWidth:             360,
+              background:           "rgba(0,0,0,0.85)",
+              backdropFilter:       "blur(24px)",
+              WebkitBackdropFilter: "blur(24px)",
+              border:               "1px solid rgba(255,255,255,0.08)",
+              borderRadius:         12,
+              padding:              "8px 0",
+              zIndex:               2002,
+              transition:           "opacity 300ms ease-out",
+            }}
+          >
+            {nodeList.map((node) => {
+              const isActive = node.id === currentId;
+              const pos      = layout[node.id];
+              const isFork   = pos ? pos.row > 0 : false;
+              return (
+                <button
+                  key={node.id}
+                  onClick={() => { travel(node.id); setPopupOpen(false); }}
+                  style={{
+                    display:    "flex",
+                    alignItems: "center",
+                    gap:        10,
+                    width:      "100%",
+                    padding:    "8px 14px",
+                    background: isActive
+                      ? "rgba(255,255,255,0.05)"
+                      : "transparent",
+                    border:       "none",
+                    cursor:       navigating ? "wait" : "pointer",
+                    textAlign:    "left",
+                    transition:   "background 300ms ease-out",
+                  }}
+                >
+                  <span
+                    style={{
+                      width:        6,
+                      height:       6,
+                      borderRadius: "50%",
+                      flexShrink:   0,
+                      background:   isActive
+                        ? "white"
+                        : isFork
+                          ? "rgba(99,102,241,0.6)"
+                          : "rgba(255,255,255,0.3)",
+                      border: isActive
+                        ? "1px solid white"
+                        : isFork
+                          ? "1px solid rgba(99,102,241,0.6)"
+                          : "1px solid rgba(255,255,255,0.3)",
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontFamily:   "'JetBrains Mono', 'Fira Code', monospace",
+                      fontSize:     11,
+                      color:        isActive
+                        ? "rgba(255,255,255,0.9)"
+                        : "rgba(255,255,255,0.55)",
+                      overflow:     "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace:   "nowrap",
+                      flex:         1,
+                    }}
+                  >
+                    {node.userText}
+                  </span>
+                  {isActive && (
+                    <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 10 }}>
+                      →
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Full expanded strip ──────────────────────────────────────────────────────
   return (
     <>
       {/* Active-node label — fixed, floats above the strip */}
@@ -229,21 +383,24 @@ export function ConversationTree() {
         </motion.div>
       )}
 
-      {/* Bottom strip */}
+      {/* Bottom strip — left-anchored, width sized to content */}
       <div
-        className="fixed bottom-0 left-0 right-0 z-[2000] overflow-x-auto overflow-y-hidden"
+        className="fixed bottom-0 left-0 z-[2000] overflow-y-hidden"
         style={{
+          width:                barWidth,
           height:               STRIP_H,
           background:           "rgba(0,0,0,0.65)",
           backdropFilter:       "blur(24px)",
           WebkitBackdropFilter: "blur(24px)",
           borderTop:            "1px solid rgba(255,255,255,0.06)",
+          borderRight:          "1px solid rgba(255,255,255,0.06)",
+          borderRadius:         "0 8px 0 0",
         }}
       >
         {/* SVG connecting lines */}
         <svg
           className="pointer-events-none absolute left-0 top-0"
-          width={svgW}
+          width={barWidth}
           height={STRIP_H}
           aria-hidden
         >

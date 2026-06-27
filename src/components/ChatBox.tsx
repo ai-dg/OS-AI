@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 const STYLES = `
   .cb-root {
     position: fixed;
-    bottom: 32px;
+    bottom: 92px;
     left: 50%;
     width: clamp(300px, 90vw, 480px);
-    z-index: 40;
+    z-index: 2100;
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
     transition: opacity 300ms ease-out, transform 300ms ease-out;
   }
@@ -88,33 +88,11 @@ interface ChatBoxProps {
 }
 
 export function ChatBox({ onSubmit, isThinking }: ChatBoxProps) {
-  const [visible, setVisible] = useState(false);
   const [value, setValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // "/" anywhere on the canvas opens and focuses the chatbox.
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      const isInput =
-        target.tagName === "INPUT" || target.tagName === "TEXTAREA";
-      if (e.key === "/" && !isInput && !e.metaKey && !e.ctrlKey) {
-        e.preventDefault();
-        setVisible(true);
-        requestAnimationFrame(() => inputRef.current?.focus());
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Escape") {
-      // stopPropagation so the canvas-level Escape (clear canvas) doesn't fire.
-      e.stopPropagation();
-      setVisible(false);
-      inputRef.current?.blur();
-    } else if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
     }
@@ -130,7 +108,7 @@ export function ChatBox({ onSubmit, isThinking }: ChatBoxProps) {
   return (
     <>
       <style>{STYLES}</style>
-      <div className={`cb-root ${visible ? "cb-visible" : "cb-hidden"}`}>
+      <div className="cb-root cb-visible">
         <div className="cb-inner">
           <input
             ref={inputRef}

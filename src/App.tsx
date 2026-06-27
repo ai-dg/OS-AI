@@ -226,14 +226,14 @@ export default function App() {
 
       {/* Mic / status orb — only during a conversation; the home page shows the
           full-screen hero orb instead, so the small one is hidden there. */}
-      <div className="fixed inset-x-0 bottom-[96px] z-30 flex flex-col items-center gap-3">
+      <div className="fixed inset-x-0 bottom-[152px] z-30 flex flex-col items-center gap-3">
         {widgetCount > 0 && (
           <StatusOrb status={status} inConversation levelRef={levelRef} />
         )}
         <p className="text-xs text-gray-500">
           {supported
-            ? "Hold Space · / to type · Esc clear · Alt+1/2/3 switch"
-            : "Voice unavailable — press / to type your prompt"}
+            ? "Hold Space · Esc clear · Alt+1/2/3 switch"
+            : "Voice unavailable — type your prompt below"}
         </p>
         {voiceError && (
           <p className="text-xs text-amber-400/80">
