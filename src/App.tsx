@@ -48,17 +48,18 @@ export default function App() {
 
       historyRef.current.push({ role: "user", content: text });
       try {
-        const full = await converse(historyRef.current, {
+        const { spoken, rawJson } = await converse(historyRef.current, {
           onSentence: (sentence) => {
             tickerRef.current?.completeSentence();
             speak(sentence);
           },
           onDelta: (delta) => tickerRef.current?.pushDelta(delta),
         });
-        historyRef.current.push({ role: "assistant", content: full });
+        // Store raw JSON as the assistant message so Claude retains canvas context.
+        historyRef.current.push({ role: "assistant", content: rawJson });
         commit({
           userText: text,
-          aiSummary: full,
+          aiSummary: spoken,
           snapshot: snapshot(),
         });
       } catch (e) {
