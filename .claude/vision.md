@@ -1,24 +1,24 @@
 # Vision
 
-## Pourquoi ce projet existe
+## Why this project exists
 
-<!-- Le problème fondamental que l'on résout -->
+<!-- The fundamental problem we are solving -->
 TODO
 
-## Vision à long terme
+## Long-term vision
 
-<!-- Dans 3-5 ans, à quoi ressemble le succès ? -->
+<!-- In 3-5 years, what does success look like? -->
 TODO
 
-## Principes directeurs
+## Guiding principles
 
-<!-- Les règles non négociables qui guident chaque décision -->
+<!-- The non-negotiable rules that guide every decision -->
 
-1. **TODO** — explication
-2. **TODO** — explication
-3. **TODO** — explication
+1. **TODO** — explanation
+2. **TODO** — explanation
+3. **TODO** — explanation
 
-## Ce que ce projet n'est pas
+## What this project is not
 
-<!-- Clarifier les fausses pistes dès le départ -->
+<!-- Clarify the wrong paths from the start -->
 TODO

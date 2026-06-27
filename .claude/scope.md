@@ -1,36 +1,36 @@
 # Scope
 
-## Version actuelle
+## Current version
 
-<!-- Numéro de version ou nom de jalon -->
+<!-- Version number or milestone name -->
 v0.1 — TODO
 
-## Inclus dans cette version
+## Included in this version
 
-<!-- Ce que l'on s'engage à livrer -->
-
-- TODO
-- TODO
-- TODO
-
-## Hors périmètre (explicitement)
-
-<!-- Ce que l'on refuse volontairement pour rester focalisé -->
+<!-- What we commit to delivering -->
 
 - TODO
 - TODO
+- TODO
 
-## Contraintes
+## Out of scope (explicitly)
 
-<!-- Contraintes techniques, temporelles, ou organisationnelles -->
+<!-- What we deliberately exclude to stay focused -->
 
-| Contrainte | Détail |
+- TODO
+- TODO
+
+## Constraints
+
+<!-- Technical, time, or organizational constraints -->
+
+| Constraint | Detail |
 |---|---|
 | TODO | TODO |
 
-## Critères de done pour cette version
+## Done criteria for this version
 
-<!-- Comment sait-on que la version est terminée ? -->
+<!-- How do we know the version is complete? -->
 
 - [ ] TODO
 - [ ] TODO
