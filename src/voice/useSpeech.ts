@@ -23,6 +23,13 @@ export function useSpeechRecognition(onFinal: (text: string) => void) {
   // True while the user is holding the mic open. Lets us restart recognition
   // if the engine ends on silence/timeout before the key is released.
   const wantOnRef = useRef(false);
+  // True between the engine's "start" and "end" events — the single source of
+  // truth used to make start()/restart idempotent and avoid InvalidStateError.
+  const runningRef = useRef(false);
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Watchdog: the Google backend can hang after audioend (no result, no end),
+  // leaving the engine stuck. This force-aborts so the next press still works.
+  const hangTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Live mic amplitude (0–1) from a Web Audio analyser. Independent of the
   // speech service, so the orb reacts to the voice even if transcription fails.
@@ -56,6 +63,7 @@ export function useSpeechRecognition(onFinal: (text: string) => void) {
       }
       console.log("[voice] onresult", { finalText, interimText });
       setDebug((d) => `${d} result`.slice(-90));
+      if (hangTimerRef.current) clearTimeout(hangTimerRef.current);
       levelRef.current = 1; // pulse the orb on each recognised chunk
       if (finalText) {
         finalsRef.current = `${finalsRef.current} ${finalText}`.trim();
@@ -66,16 +74,23 @@ export function useSpeechRecognition(onFinal: (text: string) => void) {
     rec.onend = () => {
       console.log("[voice] onend, wantOn=", wantOnRef.current);
       setDebug((d) => `${d} end`.slice(-90));
+      runningRef.current = false;
+      if (hangTimerRef.current) clearTimeout(hangTimerRef.current);
       // The engine can stop on its own (silence/timeout) while the key is still
-      // held — restart it so push-to-talk keeps listening until release. The
-      // accumulated transcript survives the restart.
+      // held — restart it so push-to-talk keeps listening until release. Restart
+      // is DEFERRED: calling start() synchronously inside onend throws
+      // InvalidStateError because the engine hasn't fully reset yet.
       if (wantOnRef.current) {
-        try {
-          rec.start();
-          return;
-        } catch {
-          /* still tearing down — fall through and submit what we have */
-        }
+        if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = setTimeout(() => {
+          if (!wantOnRef.current || runningRef.current) return;
+          try {
+            rec.start();
+          } catch {
+            /* will be retried on the next onend if still held */
+          }
+        }, 200);
+        return;
       }
       setListening(false);
       // Released: submit the whole utterance once, then reset.
@@ -92,8 +107,12 @@ export function useSpeechRecognition(onFinal: (text: string) => void) {
       setListening(false);
     };
     recRef.current = rec;
-    // Diagnostic: trace the recognition lifecycle to find where it stalls.
     const target = rec as unknown as EventTarget;
+    // Authoritative running flag: set on the engine's own "start" event.
+    target.addEventListener("start", () => {
+      runningRef.current = true;
+    });
+    // Trace the recognition lifecycle and drive the orb from speech spans.
     for (const name of [
       "audiostart",
       "soundstart",
@@ -111,10 +130,29 @@ export function useSpeechRecognition(onFinal: (text: string) => void) {
         if (name === "soundstart" || name === "speechstart") speakingRef.current = true;
         if (name === "speechend" || name === "soundend" || name === "audioend")
           speakingRef.current = false;
+        // After the engine finishes capturing, the result/end should arrive
+        // quickly. If neither does, the backend hung → force-abort to recover.
+        if (name === "audioend") {
+          if (hangTimerRef.current) clearTimeout(hangTimerRef.current);
+          hangTimerRef.current = setTimeout(() => {
+            if (runningRef.current) {
+              console.log("[voice] watchdog: no result/end after audioend → abort");
+              setDebug((d) => `${d} hang→abort`.slice(-90));
+              try {
+                rec.abort();
+              } catch {
+                /* ignore */
+              }
+              runningRef.current = false;
+            }
+          }, 1500);
+        }
       });
     }
     return () => {
       wantOnRef.current = false;
+      runningRef.current = false;
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
       rec.abort();
     };
   }, [supported]);
@@ -153,20 +191,43 @@ export function useSpeechRecognition(onFinal: (text: string) => void) {
     interimRef.current = "";
     setLiveText("");
     setListening(true);
-    try {
-      recRef.current.start();
-      setDebug((d) => `${d} ok`.slice(-90));
-    } catch (err) {
-      // Already running or still ending a prior session — onend restarts it
-      // because wantOnRef is true, so the mic still ends up active.
-      setDebug((d) => `${d} threw:${(err as Error).name}`.slice(-90));
+    // Idempotent: never call start() on an already-running engine (that throws
+    // InvalidStateError). If it's still running from a prior cycle, the existing
+    // session already keeps the mic open.
+    if (!runningRef.current) {
+      try {
+        recRef.current.start();
+        setDebug((d) => `${d} ok`.slice(-90));
+      } catch (err) {
+        // Engine is mid-teardown; onend's deferred restart will recover.
+        setDebug((d) => `${d} threw:${(err as Error).name}`.slice(-90));
+      }
+    } else {
+      setDebug((d) => `${d} already-running`.slice(-90));
     }
     startDecay();
   }, [startDecay]);
 
   const stop = useCallback(() => {
     wantOnRef.current = false;
-    recRef.current?.stop();
+    if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+    try {
+      recRef.current?.stop();
+    } catch {
+      /* not running */
+    }
+    // Recovery: if the engine is hung and never fires onend, force-reset so the
+    // next press can start a fresh session instead of "already running".
+    setTimeout(() => {
+      if (runningRef.current) {
+        try {
+          recRef.current?.abort();
+        } catch {
+          /* ignore */
+        }
+        runningRef.current = false;
+      }
+    }, 800);
     setListening(false);
     stopDecay();
   }, [stopDecay]);

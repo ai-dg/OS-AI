@@ -141,8 +141,12 @@ function playSyncResponse(
     setTimeout(() => {
       // Spawn widget on the first word of the sentence.
       if (canvas[i]) executeCanvasAction(canvas[i]);
-      // Type the sentence word by word, starting at the same moment.
-      if (segment.trim()) typeToTicker(segment.trim(), callbacks);
+      // Type the sentence word by word AND speak it — both start at the same
+      // moment, so the voice is in sync with the on-screen text reveal.
+      if (segment.trim()) {
+        typeToTicker(segment.trim(), callbacks);
+        callbacks.onSentence(segment.trim());
+      }
     }, delay);
 
     const wordCount = segment.trim().split(" ").filter(Boolean).length || 1;
@@ -153,44 +157,6 @@ function playSyncResponse(
   return new Promise<void>((resolve) => {
     setTimeout(resolve, lastWordFiresAt + 50);
   });
-}
-
-// ─── Streaming speech extractor ───────────────────────────────────────────────
-
-const SENTENCE_RE = /([.!?]+)/;
-
-function extractStreamingSpeech(buf: string): { text: string; done: boolean } {
-  for (const key of ['"speech"', '"reasoning_canvas_strategy"']) {
-    const keyIdx = buf.indexOf(key);
-    if (keyIdx === -1) continue;
-
-    const colonIdx = buf.indexOf(":", keyIdx + key.length);
-    if (colonIdx === -1) continue;
-
-    let i = colonIdx + 1;
-    while (i < buf.length && (buf[i] === " " || buf[i] === "\n" || buf[i] === "\r")) i++;
-    if (i >= buf.length || buf[i] !== '"') continue;
-    i++;
-
-    let text = "";
-    while (i < buf.length) {
-      const ch = buf[i];
-      if (ch === "\\") {
-        i++;
-        if (i < buf.length) {
-          const esc = buf[i];
-          text += esc === "n" ? "\n" : esc === "t" ? "\t" : esc === "r" ? "\r" : esc;
-        }
-      } else if (ch === '"') {
-        return { text, done: true };
-      } else {
-        text += ch;
-      }
-      i++;
-    }
-    return { text, done: false };
-  }
-  return { text: "", done: false };
 }
 
 // ─── Main conversation entry point ────────────────────────────────────────────
@@ -220,39 +186,17 @@ export async function converse(
   });
 
   let rawBuffer = "";
-  let emittedSpeechLen = 0;
-  let sentenceBuf = "";
 
+  // Buffer the full stream only — text reveal and TTS are both driven later by
+  // playSyncResponse so the voice stays in lock-step with the on-screen text.
   for await (const part of result.fullStream) {
     if (part.type === "text-delta") {
       rawBuffer += part.text;
       callbacks.onDelta?.(rawBuffer);
-
-      const { text: speechSoFar } = extractStreamingSpeech(rawBuffer);
-      const newChars = speechSoFar.slice(emittedSpeechLen);
-      if (newChars) {
-        emittedSpeechLen = speechSoFar.length;
-        callbacks.onSpeechDelta?.(speechSoFar);
-        sentenceBuf += newChars;
-
-        let match: RegExpMatchArray | null;
-        while (
-          (match = sentenceBuf.match(SENTENCE_RE)) &&
-          match.index !== undefined
-        ) {
-          const end = match.index + match[0].length;
-          const sentence = sentenceBuf.slice(0, end).trim();
-          sentenceBuf = sentenceBuf.slice(end).trimStart();
-          if (sentence) callbacks.onSentence(sentence);
-        }
-      }
     } else if (part.type === "error") {
       throw part.error;
     }
   }
-
-  const tail = sentenceBuf.trim();
-  if (tail) callbacks.onSentence(tail);
 
   let spoken = "";
   const json = rawBuffer.trim();
@@ -279,9 +223,14 @@ export async function converse(
       } else if (Array.isArray(parsed.widgets) && parsed.widgets.length > 0) {
         dispatchWidgetDeclarations(parsed.widgets as WidgetDeclaration[]);
       }
+      // No timed reveal here → show + speak the whole response together.
+      callbacks.onSpeechDelta?.(spoken);
+      callbacks.onSentence(spoken);
     } else if (Array.isArray(parsed.widgets) && parsed.widgets.length > 0) {
       dispatchWidgetDeclarations(parsed.widgets);
       if (parsed.camera) dispatchCameraAction(parsed.camera);
+      callbacks.onSpeechDelta?.(spoken);
+      callbacks.onSentence(spoken);
     }
   } catch {
     const fallbackText = json.slice(0, 300);

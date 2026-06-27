@@ -5,7 +5,7 @@ import { ResponseBox } from "@/components/ResponseBox";
 import { ProjectLabel } from "@/components/ProjectLabel";
 import { ConversationTree } from "@/tree/ConversationTree";
 import { JarvisOrb } from "@/components/JarvisOrb";
-import { useSpeechRecognition } from "@/voice/useSpeech";
+import { useWhisper } from "@/voice/useWhisper";
 import { converse } from "@/ai/converse";
 import { hasApiKey } from "@/ai/client";
 import { useCanvasStore } from "@/store/canvasStore";
@@ -43,6 +43,7 @@ export default function App() {
   const [responseText, setResponseText] = useState("");
   const [responseShown, setResponseShown] = useState(false);
   const historyRef    = useRef<ModelMessage[]>([]);
+  const voiceRef      = useRef<SpeechSynthesisVoice | null>(null);
   const speechSupported = typeof window !== "undefined" && "speechSynthesis" in window;
 
   const clearCanvas   = useCanvasStore((s) => s.clear);
@@ -80,13 +81,41 @@ export default function App() {
   }, [isSwitching]);
 
   // ── TTS ───────────────────────────────────────────────────────────────────
-  const speak = useCallback((sentence: string) => {
+  // Voices load asynchronously in Chrome — pick a natural English voice once
+  // they're available, falling back gracefully.
+  useEffect(() => {
     if (!speechSupported) return;
-    const u = new SpeechSynthesisUtterance(sentence);
-    u.rate = 1.05;
-    u.onstart = () => setStatus("speaking");
-    window.speechSynthesis.speak(u);
+    const pick = () => {
+      const voices = window.speechSynthesis.getVoices();
+      if (!voices.length) return;
+      voiceRef.current =
+        voices.find((v) => /en[-_]US/i.test(v.lang) && /google/i.test(v.name)) ??
+        voices.find((v) => /en[-_]US/i.test(v.lang)) ??
+        voices.find((v) => /^en/i.test(v.lang)) ??
+        voices[0];
+    };
+    pick();
+    window.speechSynthesis.addEventListener("voiceschanged", pick);
+    return () =>
+      window.speechSynthesis.removeEventListener("voiceschanged", pick);
   }, [speechSupported]);
+
+  const speak = useCallback(
+    (sentence: string) => {
+      if (!speechSupported) return;
+      // Strip the "|" sync separators and skip empty / punctuation-only chunks.
+      const text = sentence.replace(/\|/g, " ").replace(/\s+/g, " ").trim();
+      if (!text || !/[a-z0-9]/i.test(text)) return;
+      const u = new SpeechSynthesisUtterance(text);
+      if (voiceRef.current) u.voice = voiceRef.current;
+      u.lang = voiceRef.current?.lang ?? "en-US";
+      u.rate = 1.05;
+      u.pitch = 1;
+      u.onstart = () => setStatus("speaking");
+      window.speechSynthesis.speak(u);
+    },
+    [speechSupported],
+  );
 
   // ── Project switch ────────────────────────────────────────────────────────
   const doSwitch = useCallback(async (targetId: string) => {
@@ -130,7 +159,7 @@ export default function App() {
   }, [speak, commit, snapshot, doSwitch, saveProject, projects]);
 
   const { supported, listening, start, stop, levelRef, liveText, error: voiceError } =
-    useSpeechRecognition(handleUtterance);
+    useWhisper(handleUtterance);
 
   useEffect(() => {
     setStatus(listening ? "listening" : (s) => (s === "listening" ? "idle" : s));
@@ -208,11 +237,9 @@ export default function App() {
         </p>
         {voiceError && (
           <p className="text-xs text-amber-400/80">
-            {voiceError === "network" || voiceError === "service-not-allowed"
-              ? "Voice service unavailable — use Google Chrome (not Chromium) with internet."
-              : voiceError === "not-allowed" || voiceError === "audio-capture"
-                ? "Mic blocked — allow microphone access for this site."
-                : `Mic error: ${voiceError}`}
+            {voiceError === "mic access failed"
+              ? "Mic blocked — allow microphone access, or press / to type."
+              : "Transcription failed — try again or press / to type."}
           </p>
         )}
       </div>
