@@ -10,3 +10,4 @@ dist-ssr
 .vite
 *.tsbuildinfo
 ECC/
+task.local.md

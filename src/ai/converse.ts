@@ -45,10 +45,10 @@ export interface ConverseResult {
 // ─── Sync canvas action format ────────────────────────────────────────────────
 
 export interface SyncCanvasAction {
-  action: "spawn" | "despawn" | "zoom";
+  action: "spawn" | "despawn" | "zoom" | "zoom-out" | "spotlight";
   /** Widget id for spawn/despawn, or "*" to clear all. */
   id?: string;
-  /** Target widget id for zoom. */
+  /** Target widget id for zoom or spotlight. */
   targetId?: string;
   type?: string;
   x?: number;
@@ -94,6 +94,12 @@ function executeCanvasAction(action: SyncCanvasAction): void {
       break;
     case "zoom":
       if (action.targetId) store.zoomCamera(action.targetId, action.scale ?? 1.5);
+      break;
+    case "zoom-out":
+      store.resetCamera();
+      break;
+    case "spotlight":
+      if (action.targetId) store.spotlightCamera(action.targetId);
       break;
   }
 }

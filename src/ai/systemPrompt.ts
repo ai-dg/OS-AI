@@ -78,6 +78,13 @@ zoom — Camera zoom onto a widget (dims all others to 20% opacity).
   { "action": "zoom", "targetId": "<id>", "scale": 1.8 }
   targetId MUST be the id of a widget already spawned earlier in this same canvas array.
 
+zoom-out — Reset the camera to the full canvas view and restore all widget opacities.
+  { "action": "zoom-out" }
+
+spotlight — Cinematic vignette around a target widget with no zoom or opacity changes.
+  { "action": "spotlight", "targetId": "<id>" }
+  Adds a dark radial-gradient overlay in screen space centred on the target widget.
+
 ════════════════════════════════════════════
 WIDGET CATALOG
 ════════════════════════════════════════════
