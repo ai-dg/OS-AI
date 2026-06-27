@@ -18,12 +18,21 @@ import {
 } from "@/widgets/dynamicSchema";
 
 export interface ConverseCallbacks {
-  /** Fires once per completed sentence — drives TTS from here. */
+  /** Fires once per completed sentence — drives TTS from here (fallback paths). */
   onSentence: (sentence: string) => void;
   /** Fires on every delta of the raw stream — for a live in-progress ticker. */
   onDelta?: (partial: string) => void;
   /** Fires whenever the extracted speech text grows — drives the ResponseBox. */
   onSpeechDelta?: (speechText: string) => void;
+  /**
+   * Pre-generate audio for a sentence (returns a play handle + duration). When
+   * provided, the sync canvas path is AUDIO-DRIVEN: each segment's text reveal
+   * and canvas action are paced to its audio so voice and text stay locked, and
+   * the next segment is synthesized while the current plays (no gaps).
+   */
+  synthesize?: (
+    text: string,
+  ) => Promise<{ play(): Promise<void>; durationMs: number }>;
 }
 
 export interface ConverseResult {
@@ -89,71 +98,75 @@ function executeCanvasAction(action: SyncCanvasAction): void {
   }
 }
 
-function typeToTicker(sentence: string, callbacks: ConverseCallbacks): void {
+/** Reveals a sentence word-by-word, spread across `durationMs` (default ~paced). */
+function typeToTicker(
+  sentence: string,
+  callbacks: ConverseCallbacks,
+  durationMs?: number,
+): void {
+  callbacks.onSpeechDelta?.("");
+  const words = sentence.split(" ").filter(Boolean);
+  if (!words.length) return;
+  // Pace the words to the audio so text and voice land together. Clamp so very
+  // short clips don't flash and very long ones don't crawl.
+  const per = durationMs
+    ? Math.min(600, Math.max(90, durationMs / words.length))
+    : 250;
   let accumulated = "";
-
-  function clearTicker(): void {
-    accumulated = "";
-    callbacks.onSpeechDelta?.("");
-  }
-
-  function appendWordToTicker(word: string): void {
-    accumulated += (accumulated ? " " : "") + word;
-    callbacks.onSpeechDelta?.(accumulated);
-  }
-
-  clearTicker();
-
-  const words = sentence.split(" ");
   words.forEach((word, i) => {
     setTimeout(() => {
-      appendWordToTicker(word);
-    }, i * 250);
+      accumulated += (accumulated ? " " : "") + word;
+      callbacks.onSpeechDelta?.(accumulated);
+    }, i * per);
   });
 }
 
-function playSyncResponse(
+async function playSyncResponse(
   { speech, canvas }: { speech: string; canvas: SyncCanvasAction[] },
   callbacks: ConverseCallbacks
 ): Promise<void> {
-  const segments = speech.split("|");
+  const segments = speech.split("|").map((s) => s.trim());
+  if (segments.length === 0) return;
 
-  if (segments.length !== canvas.length) {
-    console.warn(
-      `Sync mismatch: speech segments=${segments.length} canvas actions=${canvas.length}`
-    );
+  // ── Audio-driven path: voice and text locked together, no gaps ────────────
+  // Prefetch each segment's audio while the previous one plays, and pace the
+  // text reveal to the real audio duration. This both removes the inter-sentence
+  // pauses and keeps the on-screen text exactly in step with the voice.
+  if (callbacks.synthesize) {
+    const synth = callbacks.synthesize;
+    let nextHandle = synth(segments[0] ?? "");
+    for (let i = 0; i < segments.length; i++) {
+      const handle = await nextHandle;
+      if (i + 1 < segments.length) nextHandle = synth(segments[i + 1]); // prefetch
+      if (canvas[i]) executeCanvasAction(canvas[i]);
+      if (segments[i]) {
+        const dur =
+          handle.durationMs || segments[i].split(" ").filter(Boolean).length * 300;
+        typeToTicker(segments[i], callbacks, dur);
+      }
+      await handle.play();
+    }
+    return;
   }
 
-  if (segments.length === 0) return Promise.resolve();
-
-  // Track when the last word of the last segment will finish so the Promise
-  // resolves only after the full visual sequence completes.
+  // ── Fallback path: fixed-pace timed reveal + queue-based TTS ───────────────
   let lastWordFiresAt = 0;
-
   segments.forEach((segment, i) => {
-    // Each beat starts after all previous sentences have finished reading.
-    const previousSegments = segments.slice(0, i);
-    const delay = previousSegments.reduce((acc, seg) => {
-      const wordCount = seg.trim().split(" ").filter(Boolean).length || 1;
-      return acc + wordCount * 250 + 300;
+    const delay = segments.slice(0, i).reduce((acc, seg) => {
+      const wc = seg.split(" ").filter(Boolean).length || 1;
+      return acc + wc * 250 + 300;
     }, 0);
-
     setTimeout(() => {
-      // Spawn widget on the first word of the sentence.
       if (canvas[i]) executeCanvasAction(canvas[i]);
-      // Type the sentence word by word AND speak it — both start at the same
-      // moment, so the voice is in sync with the on-screen text reveal.
-      if (segment.trim()) {
-        typeToTicker(segment.trim(), callbacks);
-        callbacks.onSentence(segment.trim());
+      if (segment) {
+        typeToTicker(segment, callbacks);
+        callbacks.onSentence(segment);
       }
     }, delay);
-
-    const wordCount = segment.trim().split(" ").filter(Boolean).length || 1;
-    const segmentLastWord = delay + (wordCount - 1) * 250;
+    const wc = segment.split(" ").filter(Boolean).length || 1;
+    const segmentLastWord = delay + (wc - 1) * 250;
     if (segmentLastWord > lastWordFiresAt) lastWordFiresAt = segmentLastWord;
   });
-
   return new Promise<void>((resolve) => {
     setTimeout(resolve, lastWordFiresAt + 50);
   });

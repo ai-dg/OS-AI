@@ -6,6 +6,7 @@ import { ProjectLabel } from "@/components/ProjectLabel";
 import { ConversationTree } from "@/tree/ConversationTree";
 import { JarvisOrb } from "@/components/JarvisOrb";
 import { useWhisper } from "@/voice/useWhisper";
+import { AudioSynthesisService } from "@/voice/AudioSynthesisService";
 import { converse } from "@/ai/converse";
 import { hasApiKey } from "@/ai/client";
 import { useCanvasStore } from "@/store/canvasStore";
@@ -42,9 +43,20 @@ export default function App() {
   const [error,        setError]        = useState<string | null>(null);
   const [responseText, setResponseText] = useState("");
   const [responseShown, setResponseShown] = useState(false);
+  const [voiceLoading, setVoiceLoading] = useState<string | null>(null);
   const historyRef    = useRef<ModelMessage[]>([]);
-  const voiceRef      = useRef<SpeechSynthesisVoice | null>(null);
-  const speechSupported = typeof window !== "undefined" && "speechSynthesis" in window;
+
+  // Text-to-speech service: local neural Kokoro voice + sentence queue. Once.
+  const ttsRef = useRef<AudioSynthesisService | null>(null);
+  if (!ttsRef.current) {
+    ttsRef.current = new AudioSynthesisService({
+      onSpeakingChange: (speaking) =>
+        setStatus((s) =>
+          speaking ? "speaking" : s === "speaking" ? "idle" : s,
+        ),
+      onVoiceLoading: (msg) => setVoiceLoading(msg),
+    });
+  }
 
   const clearCanvas   = useCanvasStore((s) => s.clear);
   const snapshot      = useCanvasStore((s) => s.snapshot);
@@ -80,46 +92,9 @@ export default function App() {
     else setStatus((s) => (s === "switching" ? "idle" : s));
   }, [isSwitching]);
 
-  // ── TTS ───────────────────────────────────────────────────────────────────
-  // Voices load asynchronously in Chrome — pick a natural English voice once
-  // they're available, falling back gracefully.
-  useEffect(() => {
-    if (!speechSupported) return;
-    const pick = () => {
-      const voices = window.speechSynthesis.getVoices();
-      if (!voices.length) return;
-      voiceRef.current =
-        voices.find((v) => /en[-_]US/i.test(v.lang) && /google/i.test(v.name)) ??
-        voices.find((v) => /en[-_]US/i.test(v.lang)) ??
-        voices.find((v) => /^en/i.test(v.lang)) ??
-        voices[0];
-    };
-    pick();
-    window.speechSynthesis.addEventListener("voiceschanged", pick);
-    return () =>
-      window.speechSynthesis.removeEventListener("voiceschanged", pick);
-  }, [speechSupported]);
-
-  const speak = useCallback(
-    (sentence: string) => {
-      if (!speechSupported) return;
-      // Strip the "|" sync separators and skip empty / punctuation-only chunks.
-      const text = sentence.replace(/\|/g, " ").replace(/\s+/g, " ").trim();
-      if (!text || !/[a-z0-9]/i.test(text)) return;
-      const u = new SpeechSynthesisUtterance(text);
-      if (voiceRef.current) u.voice = voiceRef.current;
-      u.lang = voiceRef.current?.lang ?? "en-US";
-      u.rate = 1.05;
-      u.pitch = 1;
-      u.onstart = () => setStatus("speaking");
-      window.speechSynthesis.speak(u);
-    },
-    [speechSupported],
-  );
-
   // ── Project switch ────────────────────────────────────────────────────────
   const doSwitch = useCallback(async (targetId: string) => {
-    window.speechSynthesis?.cancel();
+    ttsRef.current?.cancel();
     setStatus("switching");
     const newHistory = await switchProject(targetId, historyRef.current);
     historyRef.current = newHistory;
@@ -139,13 +114,14 @@ export default function App() {
     setStatus("thinking");
     setResponseText("");
     setResponseShown(true);
-    window.speechSynthesis?.cancel();
+    ttsRef.current?.cancel();
     historyRef.current.push({ role: "user", content: text });
 
     try {
       const { spoken, rawJson } = await converse(historyRef.current, {
-        onSentence: (sentence) => speak(sentence),
+        onSentence: (sentence) => ttsRef.current?.queueSentence(sentence),
         onSpeechDelta: (text) => setResponseText(text),
+        synthesize: (text) => ttsRef.current!.synthesize(text),
       });
       historyRef.current.push({ role: "assistant", content: rawJson });
       commit({ userText: text, aiSummary: spoken, snapshot: snapshot() });
@@ -156,7 +132,7 @@ export default function App() {
       setStatus("idle");
       setResponseShown(false);
     }
-  }, [speak, commit, snapshot, doSwitch, saveProject, projects]);
+  }, [commit, snapshot, doSwitch, saveProject, projects]);
 
   const { supported, listening, start, stop, levelRef, liveText, error: voiceError } =
     useWhisper(handleUtterance);
@@ -190,7 +166,7 @@ export default function App() {
         start();
       } else if (e.code === "Escape") {
         clearCanvas();
-        window.speechSynthesis?.cancel();
+        ttsRef.current?.cancel();
       }
     };
     const up = (e: KeyboardEvent) => {
@@ -241,6 +217,9 @@ export default function App() {
               ? "Mic blocked — allow microphone access, or press / to type."
               : "Transcription failed — try again or press / to type."}
           </p>
+        )}
+        {voiceLoading && (
+          <p className="text-xs text-teal-300/70">{voiceLoading}</p>
         )}
       </div>
 
