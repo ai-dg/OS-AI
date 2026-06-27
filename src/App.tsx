@@ -229,11 +229,16 @@ export default function App() {
       />
 
       {/* Mic / status orb — only during a conversation; the home page shows the
-          full-screen hero orb instead, so the small one is hidden there. */}
-      <div className="fixed inset-x-0 bottom-[152px] z-30 flex flex-col items-center gap-3">
-        {widgetCount > 0 && (
+          full-screen hero orb instead, so the small one is hidden there.
+          Pinned to the bottom-right corner, just above the mute toggle. */}
+      {widgetCount > 0 && (
+        <div className="fixed bottom-20 right-5 z-30">
           <StatusOrb status={status} inConversation levelRef={levelRef} />
-        )}
+        </div>
+      )}
+
+      {/* Voice hints / status text — kept centered at the bottom. */}
+      <div className="fixed inset-x-0 bottom-[152px] z-30 flex flex-col items-center gap-3">
         <p className="text-xs text-gray-500">
           {supported
             ? "Hold Space · Esc clear · Alt+1/2/3 switch"
