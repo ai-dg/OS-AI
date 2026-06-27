@@ -141,25 +141,31 @@ Render: dashed 1px border `rgba(255,255,255,0.2)`, centered label and icon, bg `
 ### `email-ui`
 Full email-client widget: scrollable list on the left, detail panel on the right. Clicking an item selects it and marks it read.
 
+**When to use:** User asks to check email, read inbox, find a message, or show Gmail. Use Gmail MCP to populate real data.
+
+**Spatial recommendation:** Full-width preferred — `x:5, y:10, w:90, h:80` (single widget only).
+
 **Multi-email schema (preferred):**
 ```js
 data: {
   emails: [
     {
-      id: string,       // unique per email
-      from: string,     // sender name or address
+      id: string,          // unique per email
+      from: string,        // display sender name e.g. "Sarah Connor"
+      fromEmail: string,   // sender email address e.g. "sarah@acme.com"
       subject: string,
-      preview: string,  // first ~100 chars of body
-      date: string,     // e.g. "2h ago", "Jun 25"
+      preview: string,     // first ~100 chars of body (shown in list row)
+      body: string,        // full email body (shown in detail panel)
+      date: string,        // e.g. "2h ago", "Jun 25"
       read: boolean,
-      labels: string[], // optional tag chips
+      labels: string[],    // optional tag chips e.g. ["urgent", "work"]
     }
   ],
   selectedId: string | null,  // pre-selected email id, or null
   unreadCount: number,        // shown as badge in header
 }
 ```
-Render: left column lists emails (avatar initials, unread dot, sender bold if unread, subject, date). Right detail panel shows subject/from/date header + full preview + label chips. Clicking an email sets selectedId in local state and marks it read (60% opacity).
+Render: left column (42% width) lists emails — avatar initials, unread dot, sender bold if unread, subject, date. Right panel always visible; shows subject/from/date header + `body` (falls back to `preview`) + label chips. "Select an email" placeholder when nothing selected. Clicking an email sets selectedId in local state and marks it read (60% opacity).
 
 **Single-card schema (legacy / AI system prompt):**
 ```js

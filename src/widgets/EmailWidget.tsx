@@ -1,11 +1,14 @@
 import { useState } from "react";
 import type { Widget } from "./types";
+import { useCanvasStore } from "@/store/canvasStore";
 
 type EmailItem = {
   id: string;
   from: string;
+  fromEmail?: string;
   subject: string;
   preview: string;
+  body?: string;
   date: string;
   read: boolean;
   labels?: string[];
@@ -96,6 +99,66 @@ function SingleEmailCard({ w }: { w: Widget }) {
   );
 }
 
+// ─── Loading skeleton ─────────────────────────────────────────────────────────
+
+function LoadingSkeletonView() {
+  const widths = [62, 48, 70, 55, 65];
+  return (
+    <div
+      className="flex h-full overflow-hidden"
+      style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+    >
+      {/* Left panel skeleton */}
+      <div
+        className="flex shrink-0 flex-col"
+        style={{ width: "42%", borderRight: "1px solid rgba(255,255,255,0.08)" }}
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 px-3 py-2">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-zinc-600">
+            inbox
+          </span>
+          <div className="h-3 w-6 animate-pulse rounded-full bg-zinc-800" />
+        </div>
+        <div className="flex flex-1 flex-col divide-y divide-zinc-900">
+          {widths.map((w, i) => (
+            <div key={i} className="flex items-center gap-3 px-3 py-2.5">
+              <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-zinc-800" />
+              <div className="flex flex-1 flex-col gap-1.5">
+                <div
+                  className="h-2 animate-pulse rounded bg-zinc-800"
+                  style={{ width: `${w}%`, animationDelay: `${i * 80}ms` }}
+                />
+                <div
+                  className="h-2 animate-pulse rounded bg-zinc-900"
+                  style={{ width: `${w - 10}%`, animationDelay: `${i * 80 + 40}ms` }}
+                />
+                <div
+                  className="h-1.5 animate-pulse rounded bg-zinc-900/80"
+                  style={{ width: `${w - 18}%`, animationDelay: `${i * 80 + 80}ms` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Right panel — fetching indicator */}
+      <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3">
+        <div className="flex gap-2">
+          {[0, 150, 300].map((delay) => (
+            <div
+              key={delay}
+              className="h-1.5 w-1.5 animate-pulse rounded-full bg-zinc-700"
+              style={{ animationDelay: `${delay}ms` }}
+            />
+          ))}
+        </div>
+        <span className="font-mono text-[10px] text-zinc-700">Fetching emails…</span>
+      </div>
+    </div>
+  );
+}
+
 // ─── Multi-email list + detail view ──────────────────────────────────────────
 
 function MultiEmailView({ w }: { w: Widget }) {
@@ -111,10 +174,40 @@ function MultiEmailView({ w }: { w: Widget }) {
 
   const selected = emails.find((e) => e.id === selectedId) ?? null;
 
+  // Canvas dispatch — used by Reply / Forward actions to spawn compose widgets.
+  const spawn = useCanvasStore((s) => s.spawn);
+
   function handleSelect(id: string) {
     setSelectedId(id);
     setReadSet((prev) => new Set([...prev, id]));
   }
+
+  function handleReply(email: EmailItem) {
+    const composeId = `compose-reply-${Date.now()}`;
+    spawn({
+      id:   composeId,
+      type: "card",
+      x: 15, y: 15, w: 70, h: 60,
+      data: {
+        title: `Re: ${email.subject}`,
+        body:  `To: ${email.fromEmail ?? email.from}\nSubject: Re: ${email.subject}\n\n`,
+      },
+    });
+  }
+
+  function handleForward(email: EmailItem) {
+    const composeId = `compose-fwd-${Date.now()}`;
+    spawn({
+      id:   composeId,
+      type: "card",
+      x: 15, y: 15, w: 70, h: 60,
+      data: {
+        title: `Fwd: ${email.subject}`,
+        body:  `To:\nSubject: Fwd: ${email.subject}\n\n---------- Forwarded message ----------\nFrom: ${email.fromEmail ?? email.from}\n\n${email.body ?? email.preview}`,
+      },
+    });
+  }
+
 
   return (
     <div
@@ -123,11 +216,10 @@ function MultiEmailView({ w }: { w: Widget }) {
     >
       {/* ── Left: email list ─────────────────────────────────────── */}
       <div
-        className="flex flex-col"
+        className="flex shrink-0 flex-col"
         style={{
-          width: selected ? "42%" : "100%",
-          borderRight: selected ? "1px solid rgba(255,255,255,0.08)" : "none",
-          transition: "width 300ms ease-out",
+          width: "42%",
+          borderRight: "1px solid rgba(255,255,255,0.08)",
         }}
       >
         {/* Inbox header */}
@@ -145,8 +237,11 @@ function MultiEmailView({ w }: { w: Widget }) {
           )}
         </div>
 
-        {/* List */}
-        <div className="min-h-0 flex-1 overflow-auto">
+        {/* List — scrollable, scrollbar hidden */}
+        <div
+          className="min-h-0 flex-1 overflow-y-auto"
+          style={{ scrollbarWidth: "none" }}
+        >
           {emails.length === 0 ? (
             <div className="flex h-full items-center justify-center font-mono text-[10px] text-zinc-700">
               no emails
@@ -155,8 +250,8 @@ function MultiEmailView({ w }: { w: Widget }) {
             emails.map((email) => {
               const isRead     = readSet.has(email.id);
               const isSelected = selectedId === email.id;
-              const color      = avatarColor(email.from);
-              const init       = initials(email.from);
+              const color      = avatarColor(email.fromEmail ?? email.from);
+              const init       = initials(email.fromEmail ?? email.from);
 
               return (
                 <div
@@ -221,45 +316,87 @@ function MultiEmailView({ w }: { w: Widget }) {
       </div>
 
       {/* ── Right: detail panel ──────────────────────────────────── */}
-      {selected && (
-        <div className="flex min-w-0 flex-1 flex-col">
-          {/* Detail header */}
-          <div className="shrink-0 border-b border-zinc-800 px-4 py-3">
-            <div className="font-mono text-sm font-semibold text-zinc-100">
-              {selected.subject}
-            </div>
-            <div className="mt-1 font-mono text-[10px] text-zinc-500">
-              {selected.from}
-            </div>
-            <div className="mt-0.5 font-mono text-[9px] text-zinc-700">
-              {selected.date}
-            </div>
-          </div>
-
-          {/* Body */}
-          <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
-            <p className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-zinc-400">
-              {selected.preview}
-            </p>
-            {selected.labels && selected.labels.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {selected.labels.map((label) => (
-                  <span
-                    key={label}
-                    className="rounded px-1.5 py-0.5 font-mono text-[9px] text-zinc-600"
-                    style={{
-                      background: "rgba(255,255,255,0.03)",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                    }}
-                  >
-                    {label}
-                  </span>
-                ))}
+      <div className="flex min-w-0 flex-1 flex-col">
+        {selected ? (
+          <>
+            {/* Detail header */}
+            <div className="shrink-0 border-b border-zinc-800 px-4 py-3">
+              <div
+                className="font-mono font-semibold text-zinc-100"
+                style={{ fontSize: 14 }}
+              >
+                {selected.subject}
               </div>
-            )}
+              <div className="mt-1 font-mono text-[10px] text-zinc-500">
+                {selected.from}
+                {selected.fromEmail && selected.fromEmail !== selected.from && (
+                  <span className="text-zinc-700"> &lt;{selected.fromEmail}&gt;</span>
+                )}
+              </div>
+              <div className="mt-0.5 font-mono text-[9px] text-zinc-700">
+                {selected.date}
+              </div>
+              {selected.labels && selected.labels.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {selected.labels.map((label) => (
+                    <span
+                      key={label}
+                      className="rounded px-1.5 py-0.5 font-mono text-[9px] text-zinc-600"
+                      style={{
+                        background: "rgba(255,255,255,0.03)",
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        transition: "all 300ms ease-out",
+                      }}
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Divider */}
+            <div style={{ height: 1, background: "rgba(255,255,255,0.08)", flexShrink: 0 }} />
+
+            {/* Body */}
+            <div
+              className="min-h-0 flex-1 overflow-y-auto px-4 py-3"
+              style={{ scrollbarWidth: "none" }}
+            >
+              <p
+                className="whitespace-pre-wrap font-mono text-xs text-zinc-400"
+                style={{ lineHeight: 1.6 }}
+              >
+                {selected.body ?? selected.preview}
+              </p>
+            </div>
+
+            {/* Action bar — Reply / Forward (dispatches compose widgets via canvas store) */}
+            <div
+              className="flex shrink-0 items-center gap-4 border-t px-4 py-2"
+              style={{ borderColor: "rgba(255,255,255,0.08)" }}
+            >
+              {[
+                { label: "reply",   action: () => handleReply(selected)   },
+                { label: "forward", action: () => handleForward(selected) },
+              ].map(({ label, action }) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={action}
+                  className="select-none font-mono text-[10px] text-zinc-700 transition-colors duration-300 hover:text-zinc-400"
+                >
+                  [{label}]
+                </button>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="flex h-full items-center justify-center">
+            <span className="font-mono text-[10px] text-zinc-700">Select an email</span>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -267,8 +404,7 @@ function MultiEmailView({ w }: { w: Widget }) {
 // ─── Exported renderer ───────────────────────────────────────────────────────
 
 export function EmailWidget(w: Widget): JSX.Element {
-  if (Array.isArray(w.data.emails)) {
-    return <MultiEmailView w={w} />;
-  }
+  if (w.data.isLoading === true)  return <LoadingSkeletonView />;
+  if (Array.isArray(w.data.emails)) return <MultiEmailView w={w} />;
   return <SingleEmailCard w={w} />;
 }

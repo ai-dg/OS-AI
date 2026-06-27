@@ -555,6 +555,7 @@ export const WIDGETS: Record<WidgetType, Renderer> = {
   "highlight-overlay":  HighlightOverlayWidget,
   "progress-bar":       ProgressBarWidget,
   "image-placeholder":  ImagePlaceholderWidget,
+  // email-ui uses useCanvasStore directly for Reply/Forward dispatch — no extra prop needed.
   "email-ui":           (w) => EmailListWidget(w),
   // Dynamic widget types — all routed through DynamicWidgetFactory
   "custom-card":      DynamicWidgetFactory,

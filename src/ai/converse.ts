@@ -16,6 +16,7 @@ import {
   isDynamicCanvasFormat,
   dynamicCanvasResponseSchema,
 } from "@/widgets/dynamicSchema";
+import { gmailAgent } from "./gmailAgent";
 
 export interface ConverseCallbacks {
   /** Fires once per completed sentence — drives TTS from here (fallback paths). */
@@ -201,24 +202,128 @@ async function playSyncResponse(
   });
 }
 
+// ─── Gmail intent detection + routing ────────────────────────────────────────
+
+const GMAIL_PATTERNS = [
+  /\b(check|show|fetch|get|read|open|see|view)\s+(my\s+)?(email|emails|inbox|mail|messages?|gmail)\b/i,
+  /\bmy\s+(email|inbox|gmail)\b/i,
+  /\b(latest|new|recent|unread)\s+(email|emails|mail|messages?)\b/i,
+  /\bemail\s+(from|to|about)\b/i,
+  /\b(send|reply\s+to|compose|forward)\s+.*(email|mail|message)\b/i,
+  /\bwho\s+(emailed|messaged|wrote)\b/i,
+  /\bshow\s+me\s+my\s+email\b/i,
+];
+
+export function isGmailIntent(text: string): boolean {
+  return GMAIL_PATTERNS.some((re) => re.test(text));
+}
+
+async function speak(text: string, callbacks: ConverseCallbacks): Promise<void> {
+  callbacks.onSpeechDelta?.(text);
+  if (callbacks.synthesize) {
+    const handle = await callbacks.synthesize(text);
+    await handle.play();
+  } else {
+    callbacks.onSentence(text);
+  }
+}
+
+async function handleGmailConverse(
+  userText: string,
+  callbacks: ConverseCallbacks
+): Promise<ConverseResult> {
+  const store = useCanvasStore.getState();
+  const WIDGET_ID = "gmail-inbox";
+
+  const isUnread = /unread/i.test(userText);
+  const isSearch = /search|find|look\s+for/i.test(userText);
+  const countMatch = userText.match(/\b(\d+)\s+email/i);
+  const count = countMatch ? Math.min(20, parseInt(countMatch[1], 10)) : 5;
+
+  // ── Phase 1: announce + spawn skeleton immediately ────────────────────────
+  const opening = isSearch
+    ? "Searching your emails now."
+    : isUnread
+    ? "Fetching your unread emails."
+    : "Checking your inbox.";
+
+  await speak(opening, callbacks);
+
+  store.clear();
+  store.spawn({
+    id:   WIDGET_ID,
+    type: "email-ui",
+    x: 5, y: 10, w: 90, h: 72,
+    data: { isLoading: true, emails: [] },
+  });
+  store.zoomCamera(WIDGET_ID, 1.2);
+
+  // ── Phase 2: fetch real data, update widget in place ─────────────────────
+  const result = isUnread
+    ? await gmailAgent.fetchUnread(count)
+    : await gmailAgent.fetchInbox(count);
+
+  let spoken: string;
+
+  if (result.error && result.emails.length === 0) {
+    store.despawn(WIDGET_ID);
+    store.resetCamera();
+    store.spawn({
+      id:   "gmail-error",
+      type: "card",
+      x: 20, y: 20, w: 60, h: 40,
+      data: { title: "Gmail unavailable", body: result.error },
+    });
+    spoken = `I couldn't reach Gmail. ${result.error}`;
+  } else {
+    store.update(WIDGET_ID, {
+      data: {
+        isLoading:   false,
+        emails:      result.emails,
+        unreadCount: result.unreadCount,
+        selectedId:  null,
+      },
+    });
+    const n = result.emails.length;
+    const u = result.unreadCount;
+    spoken = n === 0
+      ? "Your inbox is empty."
+      : `Loaded ${n} email${n !== 1 ? "s" : ""}${u > 0 ? `, ${u} unread` : ""}.`;
+  }
+
+  await speak(spoken, callbacks);
+  const rawJson = JSON.stringify({ speech: `${opening} ${spoken}`, canvas: [], gmail: true });
+  return { spoken: `${opening} ${spoken}`, rawJson };
+}
+
 // ─── Main conversation entry point ────────────────────────────────────────────
 
 /**
  * Runs one assistant turn:
  *
- *   1. Streams Claude's JSON response, buffering the full text.
- *   2. Extracts the "speech" field live as tokens arrive, emitting completed
+ *   1. Checks for Gmail intent — if detected, routes to handleGmailConverse()
+ *      which does a two-phase canvas update (skeleton → real data) via the
+ *      Gmail MCP agent rather than streaming Claude directly.
+ *   2. Otherwise streams Claude's JSON response, buffering the full text.
+ *   3. Extracts the "speech" field live as tokens arrive, emitting completed
  *      sentences immediately for TTS and the ResponseBox.
- *   3. Once streaming ends, parses the full JSON.
+ *   4. Once streaming ends, parses the full JSON.
  *      - If the response has a `canvas` array  → playSyncResponse (new sync format)
  *        Each "|"-separated speech segment fires in lock-step with its canvas action.
  *      - If the response has a `widgets` array → dispatchWidgetDeclarations (legacy VTF)
- *   4. On malformed JSON, a fallback text widget is spawned so the canvas is never blank.
+ *   5. On malformed JSON, a fallback text widget is spawned so the canvas is never blank.
  */
 export async function converse(
   history: ModelMessage[],
   callbacks: ConverseCallbacks
 ): Promise<ConverseResult> {
+  // ── Gmail intent fast path ────────────────────────────────────────────────
+  const lastMsg  = history[history.length - 1];
+  const userText = typeof lastMsg?.content === "string" ? lastMsg.content : "";
+  if (isGmailIntent(userText)) {
+    return handleGmailConverse(userText, callbacks);
+  }
+
   const context = useProjectStore.getState().getActiveContext();
   const result = streamText({
     model: anthropic(MODEL),
