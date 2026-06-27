@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ModelMessage } from "ai";
 import { Canvas } from "@/canvas/Canvas";
-import { Ticker } from "@/components/Ticker";
+import { Ticker, type TickerHandle } from "@/components/Ticker";
 import { ConversationTree } from "@/tree/ConversationTree";
 import { useSpeechRecognition } from "@/voice/useSpeech";
 import { converse } from "@/ai/converse";
@@ -13,9 +13,9 @@ type Status = "idle" | "listening" | "thinking" | "speaking";
 
 export default function App() {
   const [status, setStatus] = useState<Status>("idle");
-  const [ticker, setTicker] = useState("");
   const [error, setError] = useState<string | null>(null);
   const historyRef = useRef<ModelMessage[]>([]);
+  const tickerRef = useRef<TickerHandle>(null);
   const speechSupported =
     typeof window !== "undefined" && "speechSynthesis" in window;
 
@@ -23,19 +23,13 @@ export default function App() {
   const snapshot = useCanvasStore((s) => s.snapshot);
   const commit = useTreeStore((s) => s.commit);
 
-  // Queue sentences so TTS plays them in order and the ticker tracks speech.
+  // Queue sentences so TTS plays them in order.
   const speak = useCallback(
     (sentence: string) => {
-      if (!speechSupported) {
-        setTicker(sentence);
-        return;
-      }
+      if (!speechSupported) return;
       const u = new SpeechSynthesisUtterance(sentence);
       u.rate = 1.05;
-      u.onstart = () => {
-        setStatus("speaking");
-        setTicker(sentence);
-      };
+      u.onstart = () => setStatus("speaking");
       window.speechSynthesis.speak(u);
     },
     [speechSupported]
@@ -49,13 +43,17 @@ export default function App() {
       }
       setError(null);
       setStatus("thinking");
-      setTicker("");
+      tickerRef.current?.reset();
       window.speechSynthesis?.cancel();
 
       historyRef.current.push({ role: "user", content: text });
       try {
         const full = await converse(historyRef.current, {
-          onSentence: speak,
+          onSentence: (sentence) => {
+            tickerRef.current?.completeSentence();
+            speak(sentence);
+          },
+          onDelta: (delta) => tickerRef.current?.pushDelta(delta),
         });
         historyRef.current.push({ role: "assistant", content: full });
         commit({
@@ -91,7 +89,7 @@ export default function App() {
         start();
       } else if (e.code === "Escape") {
         clearCanvas();
-        setTicker("");
+        tickerRef.current?.reset();
         window.speechSynthesis?.cancel();
       }
     };
@@ -116,7 +114,7 @@ export default function App() {
         isThinking={status === "thinking" || status === "speaking"}
       />
       <ConversationTree />
-      <Ticker sentence={interim || ticker} />
+      <Ticker ref={tickerRef} interim={interim} />
 
       {/* Mic / status orb */}
       <div className="fixed inset-x-0 bottom-8 z-30 flex flex-col items-center gap-3">

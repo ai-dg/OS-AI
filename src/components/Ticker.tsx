@@ -1,27 +1,116 @@
-import { AnimatePresence, motion } from "framer-motion";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 
-/**
- * The ephemeral speech display: one small rectangle near the bottom showing the
- * sentence the AI is currently saying. Each new sentence replaces the last —
- * nothing accumulates on screen.
- */
-export function Ticker({ sentence }: { sentence: string }) {
+export interface TickerHandle {
+  pushDelta(delta: string): void;
+  completeSentence(): void;
+  reset(): void;
+}
+
+interface TickerProps {
+  interim?: string;
+}
+
+export const Ticker = forwardRef<TickerHandle, TickerProps>(function Ticker(
+  { interim },
+  ref
+) {
+  const [aiText, setAiText] = useState("");
+  const [opacity, setOpacity] = useState(1);
+
+  const isBusyRef = useRef(false);
+  const pendingRef = useRef("");
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function clearTimers() {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    if (fadeTimerRef.current) {
+      clearTimeout(fadeTimerRef.current);
+      fadeTimerRef.current = null;
+    }
+  }
+
+  useImperativeHandle(ref, () => ({
+    pushDelta(delta: string) {
+      if (isBusyRef.current) {
+        pendingRef.current = delta;
+      } else {
+        setAiText(delta);
+      }
+    },
+    completeSentence() {
+      clearTimers();
+      isBusyRef.current = true;
+      // Hold the completed sentence for 600ms, then fade
+      holdTimerRef.current = setTimeout(() => {
+        setOpacity(0);
+        // After 400ms fade-out completes, flush pending and reset
+        fadeTimerRef.current = setTimeout(() => {
+          setAiText(pendingRef.current);
+          pendingRef.current = "";
+          setOpacity(1);
+          isBusyRef.current = false;
+        }, 400);
+      }, 600);
+    },
+    reset() {
+      clearTimers();
+      isBusyRef.current = false;
+      pendingRef.current = "";
+      setAiText("");
+      setOpacity(1);
+    },
+  }));
+
+  useEffect(() => () => clearTimers(), []);
+
+  const displayText = interim || aiText;
+
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-28 z-30 flex justify-center px-4">
-      <AnimatePresence mode="wait">
-        {sentence && (
-          <motion.div
-            key={sentence}
-            initial={{ opacity: 0, y: 12, filter: "blur(4px)" }}
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            exit={{ opacity: 0, y: -12, filter: "blur(4px)" }}
-            transition={{ duration: 0.25 }}
-            className="max-w-2xl rounded-2xl bg-white/[0.06] px-6 py-3 text-center text-lg text-gray-100 ring-1 ring-white/10 backdrop-blur-md"
+    <div
+      style={{
+        position: "fixed",
+        top: "24px",
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: 30,
+        pointerEvents: "none",
+        opacity,
+        transition: "opacity 400ms ease-out",
+        maxWidth: "600px",
+        width: "calc(100% - 32px)",
+      }}
+    >
+      {displayText && (
+        <div
+          style={{
+            height: "48px",
+            overflow: "hidden",
+            background: "rgba(255,255,255,0.05)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            display: "flex",
+            alignItems: "center",
+            padding: "0 16px",
+          }}
+        >
+          <span
+            style={{
+              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+              fontSize: "14px",
+              color: "#ffffff",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              width: "100%",
+            }}
           >
-            {sentence}
-          </motion.div>
-        )}
-      </AnimatePresence>
+            {displayText}
+          </span>
+        </div>
+      )}
     </div>
   );
-}
+});
