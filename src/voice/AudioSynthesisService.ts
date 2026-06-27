@@ -6,7 +6,8 @@
  *  1. Kokoro-82M (default): a neural TTS model run 100% locally in the browser
  *     via kokoro-js / ONNX. Genuinely natural voice — crucial on Linux, where
  *     the native `speechSynthesis` only exposes robotic eSpeak voices. The
- *     ~80 MB model downloads once and is cached.
+ *     ~80 MB model downloads once and is cached. Inference runs in a dedicated
+ *     Web Worker (see `kokoroWorker.ts`) so it never blocks / freezes the UI.
  *  2. Streaming endpoint (opt-in): POST each sentence to a local OSS TTS server.
  *  3. Native `speechSynthesis` with a best-voice filter — instant fallback so
  *     the demo is never silent while Kokoro loads or if it fails.
@@ -41,9 +42,14 @@ interface RawAudio {
   audio: Float32Array;
   sampling_rate: number;
 }
-interface KokoroLike {
-  generate(text: string, opts: { voice: string }): Promise<RawAudio>;
-}
+
+// ── Worker message shapes ─────────────────────────────────────────────────────
+type WorkerOut =
+  | { type: "progress"; message: string }
+  | { type: "ready" }
+  | { type: "load-error"; message: string }
+  | { type: "result"; id: number; audio: Float32Array; samplingRate: number }
+  | { type: "error"; id: number; message: string };
 
 /** Ranks native voices so the least-robotic one wins (best-effort fallback). */
 function selectBestVoice(
@@ -70,13 +76,23 @@ function selectBestVoice(
 export class AudioSynthesisService {
   private queue: string[] = [];
   private active = false;
+  // When muted, all narration is silent — but the on-screen text/widget pacing
+  // still runs (synthesize returns a timed, soundless handle) so the demo looks
+  // identical. Handy while programming / running tests with no voice.
+  private muted = false;
   private voice: SpeechSynthesisVoice | null = null;
   private audioCtx: AudioContext | null = null;
   private readonly supported: boolean;
 
-  // Kokoro (local neural TTS)
-  private kokoro: KokoroLike | null = null;
-  private kokoroPromise: Promise<KokoroLike | null> | null = null;
+  // Kokoro (local neural TTS) — runs in a Web Worker so inference never blocks
+  // the main thread.
+  private worker: Worker | null = null;
+  private workerFailed = false;
+  private reqId = 0;
+  private readonly pending = new Map<
+    number,
+    { resolve: (a: RawAudio) => void; reject: (e: Error) => void }
+  >();
   private readonly kokoroVoice: string;
 
   constructor(private readonly opts: AudioSynthesisOptions = {}) {
@@ -85,7 +101,7 @@ export class AudioSynthesisService {
     this.kokoroVoice = opts.kokoroVoice ?? "bm_george"; // British male → JARVIS
     if (this.supported) this.loadVoices();
     // Warm up the neural model immediately so it's ready by first utterance.
-    if (!opts.disableKokoro) void this.ensureKokoro();
+    if (!opts.disableKokoro) this.ensureWorker();
   }
 
   private loadVoices(): void {
@@ -96,40 +112,96 @@ export class AudioSynthesisService {
     window.speechSynthesis.addEventListener("voiceschanged", pick);
   }
 
-  private ensureKokoro(): Promise<KokoroLike | null> {
-    if (this.kokoroPromise) return this.kokoroPromise;
-    this.kokoroPromise = (async () => {
-      try {
-        const { KokoroTTS } = await import("kokoro-js");
-        this.opts.onVoiceLoading?.("Loading neural voice…");
-        const tts = await KokoroTTS.from_pretrained(
-          "onnx-community/Kokoro-82M-v1.0-ONNX",
-          {
-            dtype: "q8",
-            device: "wasm",
-            progress_callback: (p: { status?: string; progress?: number }) => {
-              if (p?.status === "progress" && typeof p.progress === "number") {
-                this.opts.onVoiceLoading?.(
-                  `Loading neural voice… ${Math.round(p.progress)}%`,
-                );
-              }
-            },
-          } as unknown as Record<string, unknown>,
-        );
+  /** Lazily spins up the TTS worker and wires its message handlers. */
+  private ensureWorker(): Worker | null {
+    if (this.opts.disableKokoro || this.workerFailed) return null;
+    if (this.worker) return this.worker;
+    try {
+      this.worker = new Worker(
+        new URL("./kokoroWorker.ts", import.meta.url),
+        { type: "module" },
+      );
+      this.worker.onmessage = (e: MessageEvent<WorkerOut>) =>
+        this.onWorkerMessage(e.data);
+      this.worker.onerror = () => {
+        this.workerFailed = true;
         this.opts.onVoiceLoading?.(null);
-        this.kokoro = tts as unknown as KokoroLike;
-        return this.kokoro;
-      } catch (err) {
-        console.error("[tts] Kokoro load failed, using native voice", err);
+        this.rejectAllPending(new Error("tts worker crashed"));
+      };
+      this.worker.postMessage({ type: "warm" });
+    } catch (err) {
+      console.error("[tts] worker init failed, using native voice", err);
+      this.workerFailed = true;
+      return null;
+    }
+    return this.worker;
+  }
+
+  private onWorkerMessage(msg: WorkerOut): void {
+    switch (msg.type) {
+      case "progress":
+        this.opts.onVoiceLoading?.(msg.message);
+        break;
+      case "ready":
         this.opts.onVoiceLoading?.(null);
-        return null;
+        break;
+      case "load-error":
+        this.workerFailed = true;
+        this.opts.onVoiceLoading?.(null);
+        this.rejectAllPending(new Error(msg.message));
+        break;
+      case "result": {
+        const p = this.pending.get(msg.id);
+        if (p) {
+          this.pending.delete(msg.id);
+          p.resolve({ audio: msg.audio, sampling_rate: msg.samplingRate });
+        }
+        break;
       }
-    })();
-    return this.kokoroPromise;
+      case "error": {
+        const p = this.pending.get(msg.id);
+        if (p) {
+          this.pending.delete(msg.id);
+          p.reject(new Error(msg.message));
+        }
+        break;
+      }
+    }
+  }
+
+  private rejectAllPending(err: Error): void {
+    for (const { reject } of this.pending.values()) reject(err);
+    this.pending.clear();
+  }
+
+  /** Generate audio off-thread. Resolves null if the worker is unavailable. */
+  private generateViaWorker(text: string): Promise<RawAudio | null> {
+    const worker = this.ensureWorker();
+    if (!worker) return Promise.resolve(null);
+    const id = ++this.reqId;
+    return new Promise<RawAudio>((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      worker.postMessage({ type: "generate", id, text, voice: this.kokoroVoice });
+    }).catch((err) => {
+      console.error("[tts] worker synth failed, native fallback", err);
+      return null;
+    });
+  }
+
+  /** Mute/unmute all narration. Muting stops anything currently playing. */
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+    if (muted) this.cancel();
+  }
+
+  /** Whether narration is currently muted. */
+  isMuted(): boolean {
+    return this.muted;
   }
 
   /** Enqueue one sentence for sequential playback. */
   queueSentence(text: string): void {
+    if (this.muted) return;
     const clean = text.replace(/\|/g, " ").replace(/\s+/g, " ").trim();
     if (!clean || !/[a-z0-9]/i.test(clean)) return;
     this.queue.push(clean);
@@ -146,21 +218,26 @@ export class AudioSynthesisService {
     if (!clean || !/[a-z0-9]/i.test(clean)) {
       return { play: () => Promise.resolve(), durationMs: 0 };
     }
+    // Muted: stay silent but keep the on-screen pacing — estimate a duration
+    // from word count and resolve play() after that long without any audio.
+    if (this.muted) {
+      const words = clean.split(/\s+/).length;
+      const durationMs = Math.max(800, words * 320);
+      return {
+        durationMs,
+        play: () => new Promise<void>((resolve) => setTimeout(resolve, durationMs)),
+      };
+    }
     if (!this.opts.disableKokoro) {
-      try {
-        const tts = await this.ensureKokoro();
-        if (tts) {
-          const out = await tts.generate(clean, { voice: this.kokoroVoice });
-          return {
-            durationMs: (out.audio.length / out.sampling_rate) * 1000,
-            play: () => {
-              this.opts.onSpeakingChange?.(true);
-              return this.playBuffer(out.audio, out.sampling_rate);
-            },
-          };
-        }
-      } catch (err) {
-        console.error("[tts] kokoro synth failed, native fallback", err);
+      const out = await this.generateViaWorker(clean);
+      if (out) {
+        return {
+          durationMs: (out.audio.length / out.sampling_rate) * 1000,
+          play: () => {
+            this.opts.onSpeakingChange?.(true);
+            return this.playBuffer(out.audio, out.sampling_rate);
+          },
+        };
       }
     }
     // Native can't be pre-generated → estimate duration from word count.
@@ -194,9 +271,9 @@ export class AudioSynthesisService {
 
     try {
       if (!this.opts.disableKokoro) {
-        const tts = await this.ensureKokoro();
-        if (tts) {
-          await this.playKokoro(tts, next);
+        const out = await this.generateViaWorker(next);
+        if (out) {
+          await this.playBuffer(out.audio, out.sampling_rate);
         } else if (this.opts.streamingEndpoint) {
           await this.playStreaming(next);
         } else {
@@ -242,12 +319,6 @@ export class AudioSynthesisService {
       src.onended = () => resolve();
       src.start();
     });
-  }
-
-  // ── Strategy 1: Kokoro neural TTS (local) ─────────────────────────────────
-  private async playKokoro(tts: KokoroLike, text: string): Promise<void> {
-    const out = await tts.generate(text, { voice: this.kokoroVoice });
-    await this.playBuffer(out.audio, out.sampling_rate);
   }
 
   // ── Strategy 2: streaming OSS endpoint ────────────────────────────────────

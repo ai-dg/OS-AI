@@ -7,50 +7,77 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * Push-to-talk: records mic audio while the key is held, then transcribes the
  * captured clip on release. The model (~40 MB, whisper-tiny.en) downloads once
  * from the HuggingFace CDN and is cached by the browser for subsequent runs.
+ *
+ * Inference runs in a dedicated Web Worker (`whisperWorker.ts`) so it never
+ * blocks the main thread — the page stays responsive while a clip transcribes.
  */
 
-type Transcriber = (
-  audio: Float32Array,
-  opts?: Record<string, unknown>,
-) => Promise<{ text: string }>;
+// ── Whisper worker client (module singleton, shared across renders/instances) ──
+type WorkerOut =
+  | { type: "progress"; message: string }
+  | { type: "ready" }
+  | { type: "load-error"; message: string }
+  | { type: "result"; id: number; text: string }
+  | { type: "error"; id: number; message: string };
 
-// Lazily-created singleton pipeline, shared across renders/instances.
-let transcriberPromise: Promise<Transcriber> | null = null;
+let whisperWorker: Worker | null = null;
+let whisperReqId = 0;
+const whisperPending = new Map<
+  number,
+  { resolve: (text: string) => void; reject: (e: Error) => void }
+>();
+let onWhisperProgress: ((msg: string) => void) | null = null;
 
-async function getTranscriber(
-  onProgress?: (msg: string) => void,
-): Promise<Transcriber> {
-  if (!transcriberPromise) {
-    transcriberPromise = (async () => {
-      const { pipeline, env } = await import("@huggingface/transformers");
-      env.allowLocalModels = false; // fetch weights from the HF hub
-      const t = await pipeline(
-        "automatic-speech-recognition",
-        "onnx-community/whisper-tiny.en",
-        {
-          // Full precision everywhere: the quantized (q8/q4) decoder variants of
-          // this model hit a broken MatMulNBits path in onnxruntime-web. fp32 has
-          // no quantization, so it always loads. Larger download but reliable.
-          dtype: "fp32",
-          device: "wasm",
-          progress_callback: (p: {
-            status?: string;
-            progress?: number;
-          }) => {
-            if (
-              onProgress &&
-              p?.status === "progress" &&
-              typeof p.progress === "number"
-            ) {
-              onProgress(`Loading model… ${Math.round(p.progress)}%`);
-            }
-          },
-        },
-      );
-      return t as unknown as Transcriber;
-    })();
+function getWhisperWorker(): Worker {
+  if (!whisperWorker) {
+    whisperWorker = new Worker(
+      new URL("./whisperWorker.ts", import.meta.url),
+      { type: "module" },
+    );
+    whisperWorker.onmessage = (e: MessageEvent<WorkerOut>) => {
+      const m = e.data;
+      if (m.type === "progress") {
+        onWhisperProgress?.(m.message);
+      } else if (m.type === "result") {
+        const p = whisperPending.get(m.id);
+        if (p) {
+          whisperPending.delete(m.id);
+          p.resolve(m.text);
+        }
+      } else if (m.type === "error" || m.type === "load-error") {
+        const err = new Error(m.message);
+        if ("id" in m) {
+          const p = whisperPending.get(m.id);
+          if (p) {
+            whisperPending.delete(m.id);
+            p.reject(err);
+          }
+        }
+      }
+    };
   }
-  return transcriberPromise;
+  return whisperWorker;
+}
+
+/** Kick off model download in the worker so it's ready on mic release. */
+function warmTranscriber(onProgress?: (msg: string) => void): void {
+  if (onProgress) onWhisperProgress = onProgress;
+  getWhisperWorker().postMessage({ type: "warm" });
+}
+
+/** Transcribe a 16 kHz mono clip off-thread. */
+function transcribe(
+  audio: Float32Array,
+  onProgress?: (msg: string) => void,
+): Promise<string> {
+  if (onProgress) onWhisperProgress = onProgress;
+  const worker = getWhisperWorker();
+  const id = ++whisperReqId;
+  return new Promise<string>((resolve, reject) => {
+    whisperPending.set(id, { resolve, reject });
+    // Transfer the audio buffer (zero-copy); we don't reuse it afterwards.
+    worker.postMessage({ type: "transcribe", id, audio }, [audio.buffer]);
+  });
 }
 
 /** Decode a recorded clip to mono 16 kHz Float32 — the format Whisper expects. */
@@ -72,7 +99,9 @@ async function blobTo16kMono(blob: Blob): Promise<Float32Array> {
   src.connect(offline.destination);
   src.start(0);
   const rendered = await offline.startRendering();
-  return rendered.getChannelData(0);
+  // Copy out of the AudioBuffer so the backing buffer is safe to transfer to
+  // the worker.
+  return new Float32Array(rendered.getChannelData(0));
 }
 
 export function useWhisper(onFinal: (text: string) => void) {
@@ -170,11 +199,9 @@ export function useWhisper(onFinal: (text: string) => void) {
           return;
         }
         try {
-          const transcriber = await getTranscriber(setLiveText);
           setLiveText("Transcribing…");
           const audio = await blobTo16kMono(blob);
-          const out = await transcriber(audio);
-          const text = (out?.text ?? "").trim();
+          const text = (await transcribe(audio, setLiveText)).trim();
           setListening(false);
           setLiveText("");
           if (text && text !== "[BLANK_AUDIO]") onFinalRef.current(text);
@@ -191,7 +218,7 @@ export function useWhisper(onFinal: (text: string) => void) {
       setLiveText("Listening…");
       startMeter(stream);
       // Warm up the model in the background so it's ready on release.
-      void getTranscriber((m) =>
+      warmTranscriber((m) =>
         setLiveText((t) => (t === "Listening…" ? m : t)),
       );
     } catch (err) {

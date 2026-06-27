@@ -44,6 +44,7 @@ export default function App() {
   const [responseText, setResponseText] = useState("");
   const [responseShown, setResponseShown] = useState(false);
   const [voiceLoading, setVoiceLoading] = useState<string | null>(null);
+  const [muted, setMuted] = useState(false);
   const historyRef    = useRef<ModelMessage[]>([]);
 
   // Text-to-speech service: local neural Kokoro voice + sentence queue. Once.
@@ -99,6 +100,17 @@ export default function App() {
     const newHistory = await switchProject(targetId, historyRef.current);
     historyRef.current = newHistory;
   }, [switchProject]);
+
+  // ── Mute toggle ───────────────────────────────────────────────────────────
+  // Silences AI narration without changing anything else — the on-screen text
+  // and widgets still appear normally. Handy while programming / running tests.
+  const toggleMuted = useCallback(() => {
+    setMuted((m) => {
+      const next = !m;
+      ttsRef.current?.setMuted(next);
+      return next;
+    });
+  }, []);
 
   // ── Main utterance handler ────────────────────────────────────────────────
   const handleUtterance = useCallback(async (text: string) => {
@@ -192,6 +204,22 @@ export default function App() {
       />
       <ProjectLabel />
       <ConversationTree />
+
+      {/* Mute toggle — silence AI narration (e.g. while programming / testing). */}
+      <button
+        type="button"
+        onClick={toggleMuted}
+        aria-pressed={muted}
+        title={muted ? "Voice muted — click to enable" : "Mute AI voice"}
+        className={`fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-all duration-300 ${
+          muted
+            ? "border-amber-400/40 bg-amber-400/10 text-amber-300"
+            : "border-white/10 bg-white/5 text-gray-300 hover:bg-white/10"
+        }`}
+      >
+        <span aria-hidden>{muted ? "🔇" : "🔊"}</span>
+        {muted ? "Voice off" : "Voice on"}
+      </button>
 
       {/* While listening, the box mirrors the live transcript of the user's
           speech; once thinking/speaking it shows Claude's response. */}

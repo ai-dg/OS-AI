@@ -98,6 +98,36 @@ function executeCanvasAction(action: SyncCanvasAction): void {
   }
 }
 
+/**
+ * Pulls the (possibly still-incomplete) value of the `"speech"` field out of a
+ * partial JSON buffer as it streams in. Returns "" until the field appears.
+ * Used to show Claude's answer forming live instead of waiting for the whole
+ * JSON to finish — handles the common escapes and stops at the closing quote.
+ */
+function extractPartialSpeech(buf: string): string {
+  const m = buf.match(/"speech"\s*:\s*"/);
+  if (!m || m.index === undefined) return "";
+  let i = m.index + m[0].length;
+  let out = "";
+  while (i < buf.length) {
+    const c = buf[i];
+    if (c === "\\") {
+      const n = buf[i + 1];
+      if (n === undefined) break; // escape split across chunks — stop here
+      if (n === "n") out += "\n";
+      else if (n === "t") out += "\t";
+      else out += n;
+      i += 2;
+      continue;
+    }
+    if (c === '"') break; // end of the speech string
+    out += c;
+    i++;
+  }
+  // Speech uses "|" to mark segment boundaries — render them as spaces.
+  return out.replace(/\|/g, " ").replace(/\s+/g, " ").trimStart();
+}
+
 /** Reveals a sentence word-by-word, spread across `durationMs` (default ~paced). */
 function typeToTicker(
   sentence: string,
@@ -128,22 +158,21 @@ async function playSyncResponse(
   const segments = speech.split("|").map((s) => s.trim());
   if (segments.length === 0) return;
 
-  // ── Audio-driven path: voice and text locked together, no gaps ────────────
-  // Prefetch each segment's audio while the previous one plays, and pace the
-  // text reveal to the real audio duration. This both removes the inter-sentence
-  // pauses and keeps the on-screen text exactly in step with the voice.
+  // ── Audio-driven path: instant paint, gap-free voice ──────────────────────
+  // The answer text is already on screen (streamed live during generation), so
+  // here we only (a) paint each segment's widget immediately — no waiting on
+  // audio — and (b) play its narration, prefetching the next clip so playback
+  // has no gaps. Synthesis runs in a worker, so nothing blocks the UI.
   if (callbacks.synthesize) {
     const synth = callbacks.synthesize;
+    // Make sure the full reply is shown even on the fallback path, where it was
+    // never streamed live.
+    callbacks.onSpeechDelta?.(segments.join(" ").replace(/\s+/g, " ").trim());
     let nextHandle = synth(segments[0] ?? "");
     for (let i = 0; i < segments.length; i++) {
+      if (canvas[i]) executeCanvasAction(canvas[i]); // paint widget instantly
       const handle = await nextHandle;
       if (i + 1 < segments.length) nextHandle = synth(segments[i + 1]); // prefetch
-      if (canvas[i]) executeCanvasAction(canvas[i]);
-      if (segments[i]) {
-        const dur =
-          handle.durationMs || segments[i].split(" ").filter(Boolean).length * 300;
-        typeToTicker(segments[i], callbacks, dur);
-      }
       await handle.play();
     }
     return;
@@ -199,13 +228,20 @@ export async function converse(
   });
 
   let rawBuffer = "";
+  let lastLiveSpeech = "";
 
-  // Buffer the full stream only — text reveal and TTS are both driven later by
-  // playSyncResponse so the voice stays in lock-step with the on-screen text.
+  // Stream the answer live: extract the `speech` field from the partial JSON as
+  // tokens arrive and push it to the ResponseBox, so the user sees the reply
+  // forming immediately instead of staring at a frozen "thinking" state.
   for await (const part of result.fullStream) {
     if (part.type === "text-delta") {
       rawBuffer += part.text;
       callbacks.onDelta?.(rawBuffer);
+      const live = extractPartialSpeech(rawBuffer);
+      if (live && live !== lastLiveSpeech) {
+        lastLiveSpeech = live;
+        callbacks.onSpeechDelta?.(live);
+      }
     } else if (part.type === "error") {
       throw part.error;
     }
