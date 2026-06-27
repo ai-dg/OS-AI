@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ModelMessage } from "ai";
 import { Canvas } from "@/canvas/Canvas";
-import { Ticker, type TickerHandle } from "@/components/Ticker";
+import { ResponseBox } from "@/components/ResponseBox";
 import { ConversationTree } from "@/tree/ConversationTree";
 import { useSpeechRecognition } from "@/voice/useSpeech";
 import { converse } from "@/ai/converse";
@@ -14,8 +14,9 @@ type Status = "idle" | "listening" | "thinking" | "speaking";
 export default function App() {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [responseText, setResponseText] = useState("");
+  const [responseShown, setResponseShown] = useState(false);
   const historyRef = useRef<ModelMessage[]>([]);
-  const tickerRef = useRef<TickerHandle>(null);
   const speechSupported =
     typeof window !== "undefined" && "speechSynthesis" in window;
 
@@ -43,17 +44,15 @@ export default function App() {
       }
       setError(null);
       setStatus("thinking");
-      tickerRef.current?.reset();
+      setResponseText("");
+      setResponseShown(true);
       window.speechSynthesis?.cancel();
 
       historyRef.current.push({ role: "user", content: text });
       try {
         const { spoken, rawJson } = await converse(historyRef.current, {
-          onSentence: (sentence) => {
-            tickerRef.current?.completeSentence();
-            speak(sentence);
-          },
-          onDelta: (delta) => tickerRef.current?.pushDelta(delta),
+          onSentence: (sentence) => speak(sentence),
+          onSpeechDelta: (text) => setResponseText(text),
         });
         // Store raw JSON as the assistant message so Claude retains canvas context.
         historyRef.current.push({ role: "assistant", content: rawJson });
@@ -66,12 +65,13 @@ export default function App() {
         setError(e instanceof Error ? e.message : "Something went wrong.");
       } finally {
         setStatus("idle");
+        setResponseShown(false);
       }
     },
     [speak, commit, snapshot]
   );
 
-  const { supported, listening, interim, start, stop } =
+  const { supported, listening, start, stop } =
     useSpeechRecognition(handleUtterance);
 
   useEffect(() => {
@@ -90,7 +90,6 @@ export default function App() {
         start();
       } else if (e.code === "Escape") {
         clearCanvas();
-        tickerRef.current?.reset();
         window.speechSynthesis?.cancel();
       }
     };
@@ -115,7 +114,7 @@ export default function App() {
         isThinking={status === "thinking" || status === "speaking"}
       />
       <ConversationTree />
-      <Ticker ref={tickerRef} interim={interim} />
+      <ResponseBox text={responseText} shown={responseShown} />
 
       {/* Mic / status orb */}
       <div className="fixed inset-x-0 bottom-8 z-30 flex flex-col items-center gap-3">

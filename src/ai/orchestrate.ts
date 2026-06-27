@@ -1,5 +1,6 @@
 import { useCanvasStore } from "@/store/canvasStore";
 import type { WidgetType } from "@/widgets/types";
+import { clampToSafeZone } from "@/canvas/layoutManager";
 
 // ─── Legacy canvas-command format ─────────────────────────────────────────────
 
@@ -200,13 +201,16 @@ export function dispatchWidgetDeclarations(
     const storeType = TYPE_MAP[decl.type];
     if (!storeType) return;
     const { top, left, width, height } = decl.position ?? {};
+    const safe = clampToSafeZone({
+      x: pct(left),
+      y: pct(top),
+      w: pct(width),
+      h: pct(height),
+    });
     useCanvasStore.getState().spawn({
       id:   decl.id,
       type: storeType,
-      x:    pct(left),
-      y:    pct(top),
-      w:    pct(width),
-      h:    pct(height),
+      ...safe,
       data: mapProps(decl.type, decl.props ?? {}),
     });
   }

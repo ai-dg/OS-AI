@@ -3,19 +3,21 @@ import type { ModelMessage } from "ai";
 import { anthropic, MODEL } from "./client";
 import { SYSTEM_PROMPT } from "./systemPrompt";
 import {
-  dispatchCanvasCommands,
   dispatchWidgetDeclarations,
   dispatchCameraAction,
-  type CanvasCommand,
   type WidgetDeclaration,
   type CameraAction,
 } from "./orchestrate";
+import { useCanvasStore } from "@/store/canvasStore";
+import type { WidgetType } from "@/widgets/types";
 
 export interface ConverseCallbacks {
-  /** Fires once per completed sentence — drive the ticker + TTS from here. */
+  /** Fires once per completed sentence — drives TTS from here. */
   onSentence: (sentence: string) => void;
   /** Fires on every delta of the raw stream — for a live in-progress ticker. */
   onDelta?: (partial: string) => void;
+  /** Fires whenever the extracted speech text grows — drives the ResponseBox. */
+  onSpeechDelta?: (speechText: string) => void;
 }
 
 export interface ConverseResult {
@@ -25,16 +27,133 @@ export interface ConverseResult {
   rawJson: string;
 }
 
+// ─── Sync canvas action format ────────────────────────────────────────────────
+
+export interface SyncCanvasAction {
+  action: "spawn" | "despawn" | "zoom";
+  /** Widget id for spawn/despawn, or "*" to clear all. */
+  id?: string;
+  /** Target widget id for zoom. */
+  targetId?: string;
+  type?: string;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  scale?: number;
+  data?: Record<string, unknown>;
+}
+
+const SYNC_TYPE_MAP: Record<string, WidgetType> = {
+  "text-block":        "card",
+  "bullet-list":       "bullets",
+  "stat-card":         "stat",
+  "code-block":        "code",
+  "arrow":             "arrow",
+  "highlight-overlay": "highlight-overlay",
+  "progress-bar":      "progress-bar",
+  "image-placeholder": "image-placeholder",
+  "email-ui":          "email-ui",
+};
+
+function executeCanvasAction(action: SyncCanvasAction): void {
+  const store = useCanvasStore.getState();
+  switch (action.action) {
+    case "spawn": {
+      if (!action.id || !action.type) break;
+      const storeType = SYNC_TYPE_MAP[action.type] ?? (action.type as WidgetType);
+      store.spawn({
+        id:   action.id,
+        type: storeType,
+        x:    action.x,
+        y:    action.y,
+        w:    action.w,
+        h:    action.h,
+        data: action.data ?? {},
+      });
+      break;
+    }
+    case "despawn":
+      if (action.id === "*") store.clear();
+      else if (action.id) store.despawn(action.id);
+      break;
+    case "zoom":
+      if (action.targetId) store.zoomCamera(action.targetId, action.scale ?? 1.5);
+      break;
+  }
+}
+
+function typeToTicker(sentence: string, callbacks: ConverseCallbacks): void {
+  let accumulated = "";
+
+  function clearTicker(): void {
+    accumulated = "";
+    callbacks.onSpeechDelta?.("");
+  }
+
+  function appendWordToTicker(word: string): void {
+    accumulated += (accumulated ? " " : "") + word;
+    callbacks.onSpeechDelta?.(accumulated);
+  }
+
+  clearTicker();
+
+  const words = sentence.split(" ");
+  words.forEach((word, i) => {
+    setTimeout(() => {
+      appendWordToTicker(word);
+    }, i * 250);
+  });
+}
+
+function playSyncResponse(
+  { speech, canvas }: { speech: string; canvas: SyncCanvasAction[] },
+  callbacks: ConverseCallbacks
+): Promise<void> {
+  const segments = speech.split("|");
+
+  if (segments.length !== canvas.length) {
+    console.warn(
+      `Sync mismatch: speech segments=${segments.length} canvas actions=${canvas.length}`
+    );
+  }
+
+  if (segments.length === 0) return Promise.resolve();
+
+  // Track when the last word of the last segment will finish so the Promise
+  // resolves only after the full visual sequence completes.
+  let lastWordFiresAt = 0;
+
+  segments.forEach((segment, i) => {
+    // Each beat starts after all previous sentences have finished reading.
+    const previousSegments = segments.slice(0, i);
+    const delay = previousSegments.reduce((acc, seg) => {
+      const wordCount = seg.trim().split(" ").filter(Boolean).length || 1;
+      return acc + wordCount * 250 + 300;
+    }, 0);
+
+    setTimeout(() => {
+      // Spawn widget on the first word of the sentence.
+      if (canvas[i]) executeCanvasAction(canvas[i]);
+      // Type the sentence word by word, starting at the same moment.
+      if (segment.trim()) typeToTicker(segment.trim(), callbacks);
+    }, delay);
+
+    const wordCount = segment.trim().split(" ").filter(Boolean).length || 1;
+    const segmentLastWord = delay + (wordCount - 1) * 250;
+    if (segmentLastWord > lastWordFiresAt) lastWordFiresAt = segmentLastWord;
+  });
+
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, lastWordFiresAt + 50);
+  });
+}
+
+// ─── Streaming speech extractor ───────────────────────────────────────────────
+
 const SENTENCE_RE = /([.!?]+)/;
 
-/**
- * Scans a growing JSON buffer and extracts the value of the first matching
- * string field. We check for "speech" first (Visual Translation Framework
- * format) and the response always emits it as the first key so streaming
- * starts immediately.
- */
 function extractStreamingSpeech(buf: string): { text: string; done: boolean } {
-  // Try "speech" first; new format also uses it as the first field.
   for (const key of ['"speech"', '"reasoning_canvas_strategy"']) {
     const keyIdx = buf.indexOf(key);
     if (keyIdx === -1) continue;
@@ -45,7 +164,7 @@ function extractStreamingSpeech(buf: string): { text: string; done: boolean } {
     let i = colonIdx + 1;
     while (i < buf.length && (buf[i] === " " || buf[i] === "\n" || buf[i] === "\r")) i++;
     if (i >= buf.length || buf[i] !== '"') continue;
-    i++; // skip opening quote
+    i++;
 
     let text = "";
     while (i < buf.length) {
@@ -68,19 +187,19 @@ function extractStreamingSpeech(buf: string): { text: string; done: boolean } {
   return { text: "", done: false };
 }
 
+// ─── Main conversation entry point ────────────────────────────────────────────
+
 /**
- * Runs one assistant turn using the Visual Translation Framework protocol:
+ * Runs one assistant turn:
  *
  *   1. Streams Claude's JSON response, buffering the full text.
  *   2. Extracts the "speech" field live as tokens arrive, emitting completed
- *      sentences immediately for TTS and the ticker.
+ *      sentences immediately for TTS and the ResponseBox.
  *   3. Once streaming ends, parses the full JSON.
- *      - If the response has a `widgets` array  → dispatchWidgetDeclarations
- *        (new Visual Translation Framework format — clears canvas first).
- *      - If the response has a `canvas` array   → dispatchCanvasCommands
- *        (legacy incremental format — no implicit clear).
- *   4. On malformed JSON, a fallback text widget is spawned so the canvas
- *      is never blank.
+ *      - If the response has a `canvas` array  → playSyncResponse (new sync format)
+ *        Each "|"-separated speech segment fires in lock-step with its canvas action.
+ *      - If the response has a `widgets` array → dispatchWidgetDeclarations (legacy VTF)
+ *   4. On malformed JSON, a fallback text widget is spawned so the canvas is never blank.
  */
 export async function converse(
   history: ModelMessage[],
@@ -106,6 +225,7 @@ export async function converse(
       const newChars = speechSoFar.slice(emittedSpeechLen);
       if (newChars) {
         emittedSpeechLen = speechSoFar.length;
+        callbacks.onSpeechDelta?.(speechSoFar);
         sentenceBuf += newChars;
 
         let match: RegExpMatchArray | null;
@@ -135,34 +255,38 @@ export async function converse(
       speech?: string;
       reasoning_canvas_strategy?: string;
       widgets?: WidgetDeclaration[];
-      canvas?: CanvasCommand[];
+      canvas?: SyncCanvasAction[];
       camera?: CameraAction;
     };
 
-    // Prefer "speech" for the spoken text; fall back to reasoning_canvas_strategy.
     spoken = parsed.speech ?? parsed.reasoning_canvas_strategy ?? "";
 
-    if (Array.isArray(parsed.widgets) && parsed.widgets.length > 0) {
+    if (Array.isArray(parsed.canvas) && parsed.canvas.length > 0) {
+      // New synchronised format — speech segments fire in lock-step with canvas actions.
+      await playSyncResponse({ speech: spoken, canvas: parsed.canvas }, callbacks);
+    } else if (Array.isArray(parsed.widgets) && parsed.widgets.length > 0) {
+      // Legacy Visual Translation Framework format.
       dispatchWidgetDeclarations(parsed.widgets);
-    } else if (Array.isArray(parsed.canvas) && parsed.canvas.length > 0) {
-      dispatchCanvasCommands(parsed.canvas);
-    }
-
-    // Camera actions are optional and independent of widget spawning.
-    if (parsed.camera) {
-      dispatchCameraAction(parsed.camera);
+      if (parsed.camera) dispatchCameraAction(parsed.camera);
     }
   } catch {
-    spoken = json.slice(0, 300);
-    dispatchCanvasCommands([
+    const fallbackText = json.slice(0, 300);
+    spoken = fallbackText;
+    await playSyncResponse(
       {
-        action: "spawn",
-        type: "text",
-        id: "fallback",
-        x: 15, y: 25, w: 70, h: 40,
-        data: { text: json },
+        speech: fallbackText,
+        canvas: [
+          {
+            action: "spawn",
+            type: "text-block",
+            id: "fallback",
+            x: 10, y: 20, w: 80, h: 50,
+            data: { title: "Response", body: fallbackText },
+          },
+        ],
       },
-    ]);
+      callbacks
+    );
   }
 
   return { spoken, rawJson: json };
