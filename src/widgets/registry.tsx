@@ -9,8 +9,10 @@
  * in WIDGETS below, and add a catalog entry to ai/systemPrompt.ts.
  */
 
+import { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import type { Widget, WidgetType } from "./types";
+import { useCanvasStore } from "@/store/canvasStore";
 import { DynamicWidgetFactory } from "./DynamicWidgetFactory";
 import { DynamicImageWidget } from "./ImageWidget";
 import { EmailWidget as EmailListWidget } from "./EmailWidget";
@@ -20,6 +22,10 @@ import { QCMWidget } from "./QCMWidget";
 import { LessonWidget } from "./LessonWidget";
 import { MailCompose } from "./MailCompose";
 import { Dialog } from "./Dialog";
+import { KeyValueCard } from "./KeyValueCard";
+import { Timeline } from "./Timeline";
+import { Callout } from "./Callout";
+import { ComparisonCard } from "./ComparisonCard";
 
 type Renderer = (w: Widget) => JSX.Element;
 
@@ -447,34 +453,74 @@ const CircleStatWidget: Renderer = (w) => {
   );
 };
 
+// ─── Auto-height wrapper ──────────────────────────────────────────────────────
+
+function AutoSizedWidget({ widget, children }: { widget: Widget; children: React.ReactNode }) {
+  const divRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (widget.h !== 'auto') return;
+    if (!divRef.current) return;
+
+    const ro = new ResizeObserver(entries => {
+      const entry = entries[0];
+      if (!entry) return;
+      const canvas = document.getElementById('jarvis-canvas');
+      if (!canvas) return;
+      const canvasH = canvas.clientHeight;
+      const measuredPct = (entry.contentRect.height / canvasH) * 100;
+      useCanvasStore.getState().resizeWidget(widget.id, measuredPct);
+    });
+
+    ro.observe(divRef.current);
+    return () => ro.disconnect();
+  }, [widget.id, widget.h]);
+
+  if (widget.h !== 'auto') return <>{children}</>;
+  return <div ref={divRef}>{children}</div>;
+}
+
+function wrapWithAutoSize(renderer: Renderer): Renderer {
+  const InnerRenderer = renderer;
+  return (w: Widget) => (
+    <AutoSizedWidget widget={w}>
+      <InnerRenderer {...w} />
+    </AutoSizedWidget>
+  );
+}
+
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
 export const WIDGETS: Record<WidgetType, Renderer> = {
-  text:    TextWidget,
-  heading: HeadingWidget,
-  bullets: BulletsWidget,
-  stat:    StatWidget,
-  card:    CardWidget,
-  arrow:   ArrowWidget,
-  image:   ImageWidget,
-  code:    CodeWidget,
-  email:   EmailWidget,
-  "highlight-overlay":  HighlightOverlayWidget,
-  "progress-bar":       ProgressBarWidget,
-  "image-placeholder":  ImagePlaceholderWidget,
-  "email-ui":           (w) => EmailListWidget(w),
+  text:    wrapWithAutoSize(TextWidget),
+  heading: wrapWithAutoSize(HeadingWidget),
+  bullets: wrapWithAutoSize(BulletsWidget),
+  stat:    wrapWithAutoSize(StatWidget),
+  card:    wrapWithAutoSize(CardWidget),
+  arrow:   wrapWithAutoSize(ArrowWidget),
+  image:   wrapWithAutoSize(ImageWidget),
+  code:    wrapWithAutoSize(CodeWidget),
+  email:   wrapWithAutoSize(EmailWidget),
+  "highlight-overlay":  wrapWithAutoSize(HighlightOverlayWidget),
+  "progress-bar":       wrapWithAutoSize(ProgressBarWidget),
+  "image-placeholder":  wrapWithAutoSize(ImagePlaceholderWidget),
+  "email-ui":           wrapWithAutoSize((w) => EmailListWidget(w)),
   // Dynamic widget types — all routed through DynamicWidgetFactory
-  "custom-card":      DynamicWidgetFactory,
-  "data-grid":        DynamicWidgetFactory,
-  "vector-graphics":  DynamicWidgetFactory,
-  "list-container":   DynamicWidgetFactory,
-  "image-widget":     DynamicImageWidget,
-  "network-graph":    NetworkGraphWidget,
-  "circle-stat":      CircleStatWidget,
-  "math-block":       MathWidget,
-  "task-list":        TaskList,
-  "qcm":              QCMWidget,
-  "lesson":           LessonWidget,
-  "mail-compose":     MailCompose,
-  "dialog":           Dialog,
+  "custom-card":      wrapWithAutoSize(DynamicWidgetFactory),
+  "data-grid":        wrapWithAutoSize(DynamicWidgetFactory),
+  "vector-graphics":  wrapWithAutoSize(DynamicWidgetFactory),
+  "list-container":   wrapWithAutoSize(DynamicWidgetFactory),
+  "image-widget":     wrapWithAutoSize(DynamicImageWidget),
+  "network-graph":    wrapWithAutoSize(NetworkGraphWidget),
+  "circle-stat":      wrapWithAutoSize(CircleStatWidget),
+  "math-block":       wrapWithAutoSize(MathWidget),
+  "task-list":        wrapWithAutoSize(TaskList),
+  "qcm":              wrapWithAutoSize(QCMWidget),
+  "lesson":           wrapWithAutoSize(LessonWidget),
+  "mail-compose":     wrapWithAutoSize(MailCompose),
+  "dialog":           wrapWithAutoSize(Dialog),
+  "key-value-card":   wrapWithAutoSize(KeyValueCard),
+  "timeline":         wrapWithAutoSize(Timeline),
+  "callout":          wrapWithAutoSize(Callout),
+  "comparison-card":  wrapWithAutoSize(ComparisonCard),
 };

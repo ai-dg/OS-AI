@@ -54,7 +54,7 @@ export interface SyncCanvasAction {
   x?: number;
   y?: number;
   w?: number;
-  h?: number;
+  h?: number | 'auto';
   scale?: number;
   data?: Record<string, unknown>;
 }
@@ -70,6 +70,10 @@ const SYNC_TYPE_MAP: Record<string, WidgetType> = {
   "image-placeholder": "image-placeholder",
   "email-ui":          "email-ui",
   "math-block":        "math-block",
+  "key-value-card":    "key-value-card",
+  "timeline":          "timeline",
+  "callout":           "callout",
+  "comparison-card":   "comparison-card",
 };
 
 function executeCanvasAction(action: SyncCanvasAction): void {

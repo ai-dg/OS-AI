@@ -18,16 +18,22 @@ interface CanvasProps {
 
 // ─── Connecting-arrow SVG overlay ─────────────────────────────────────────────
 
+/** Resolve the numeric height of a widget, falling back to measuredH or 20 when h==='auto'. */
+function numH(w: Widget): number {
+  return typeof w.h === 'number' ? w.h : (w.measuredH ?? 20);
+}
+
 function edgePt(
   w: Widget,
   side: "right" | "left" | "top" | "bottom"
 ): { x: number; y: number } {
+  const h = numH(w);
   const cx = w.x + w.w / 2;
-  const cy = w.y + w.h / 2;
+  const cy = w.y + h / 2;
   return side === "right"  ? { x: w.x + w.w, y: cy }
        : side === "left"   ? { x: w.x,        y: cy }
        : side === "top"    ? { x: cx,          y: w.y }
-       :                     { x: cx,          y: w.y + w.h };
+       :                     { x: cx,          y: w.y + h };
 }
 
 function ConnectingArrows({
@@ -66,7 +72,7 @@ function ConnectingArrows({
         if (!src || !tgt) return null;
 
         const dx = (tgt.x + tgt.w / 2) - (src.x + src.w / 2);
-        const dy = (tgt.y + tgt.h / 2) - (src.y + src.h / 2);
+        const dy = (tgt.y + numH(tgt) / 2) - (src.y + numH(src) / 2);
         const horiz = Math.abs(dx) >= Math.abs(dy);
 
         const start = horiz
@@ -147,6 +153,25 @@ function shellConfig(type: Widget["type"]): ShellConfig {
           borderRadius: 12,
         },
       };
+    case "key-value-card":
+    case "timeline":
+    case "comparison-card":
+      return {
+        outerCls:   "absolute overflow-hidden",
+        innerCls:   "h-full w-full",
+        outerStyle: {
+          background:   "rgba(255,255,255,0.05)",
+          border:       "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 8,
+        },
+      };
+    case "callout":
+      // Callout draws its own type-specific bg and 3px left border.
+      return {
+        outerCls:   "absolute overflow-hidden",
+        innerCls:   "h-full w-full",
+        outerStyle: { borderRadius: 8 },
+      };
     default:
       return {
         outerCls: "absolute overflow-hidden border border-zinc-800 bg-zinc-950",
@@ -162,10 +187,10 @@ function shellConfig(type: Widget["type"]): ShellConfig {
 
 function SpotlightOverlay({ target }: { target: Widget }) {
   const cx = target.x + target.w / 2; // 0–100 canvas %
-  const cy = target.y + target.h / 2;
+  const cy = target.y + numH(target) / 2;
 
   // Clear radius: slightly larger than the widget's bounding box half-diagonal
-  const clearR  = Math.max(target.w, target.h) * 0.65;
+  const clearR  = Math.max(target.w, numH(target)) * 0.65;
   const fadeEnd = clearR + 28; // gradient fade width
 
   return (
@@ -294,7 +319,7 @@ export function Canvas({ onSubmit, isThinking, chatBusy, voiceLevelRef }: Canvas
 
   // Widget centre as 0-1 fractions of canvas
   const cx = target ? (target.x + target.w / 2) / 100 : 0.5;
-  const cy = target ? (target.y + target.h / 2) / 100 : 0.5;
+  const cy = target ? (target.y + numH(target) / 2) / 100 : 0.5;
 
   // Camera translate — pixel values so Framer Motion can interpolate correctly
   const isZoomed = cameraMode === "zoom" && !!target;
@@ -306,6 +331,7 @@ export function Canvas({ onSubmit, isThinking, chatBusy, voiceLevelRef }: Canvas
 
   return (
     <div
+      id="jarvis-canvas"
       className="canvas-bg relative overflow-hidden"
       style={{ width: "100vw", height: "100vh" }}
     >
@@ -371,7 +397,9 @@ export function Canvas({ onSubmit, isThinking, chatBusy, voiceLevelRef }: Canvas
                   left:   `${w.x}%`,
                   top:    `${w.y}%`,
                   width:  `${w.w}%`,
-                  height: `${w.h}%`,
+                  height: w.h === 'auto'
+                    ? (w.measuredH ? `${w.measuredH}%` : 'auto')
+                    : `${w.h}%`,
                   zIndex: 10 + i,
                   ...outerStyle,
                   cursor: "pointer",

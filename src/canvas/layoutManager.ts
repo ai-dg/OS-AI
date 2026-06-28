@@ -25,15 +25,17 @@ if (typeof window !== "undefined") {
  * Clamps a widget bounding box so it does not intrude into any registered
  * blocked region. If the widget's bottom exceeds the safe zone, its height
  * is reduced to fit. The minimum clamped height is 5%.
+ * Auto-height widgets are returned unchanged — their bottom is not known until measured.
  */
 export function clampToSafeZone(rect: {
   x: number;
   y: number;
   w: number;
-  h: number;
-}): { x: number; y: number; w: number; h: number } {
+  h: number | 'auto';
+}): { x: number; y: number; w: number; h: number | 'auto' } {
   const zone = REGISTRY.get("reserved-bottom-zone");
   if (!zone) return rect;
+  if (typeof rect.h !== 'number') return rect;
 
   const widgetBottom = rect.y + rect.h;
   if (widgetBottom > zone.y) {

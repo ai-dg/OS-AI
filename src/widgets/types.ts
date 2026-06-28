@@ -30,14 +30,19 @@ export type WidgetType =
   | "qcm"
   | "lesson"
   | "mail-compose"
-  | "dialog";
+  | "dialog"
+  // General-purpose rich widgets
+  | "key-value-card"
+  | "timeline"
+  | "callout"
+  | "comparison-card";
 
 /** Position + size are percentages of the viewport (0–100). */
 export interface WidgetLayout {
   x: number;
   y: number;
   w: number;
-  h: number;
+  h: number | 'auto';
 }
 
 export interface WidgetBase extends WidgetLayout {
@@ -49,6 +54,8 @@ export interface WidgetBase extends WidgetLayout {
   opacity: number;
   /** Arbitrary, widget-specific payload validated at render time. */
   data: Record<string, unknown>;
+  /** Set by ResizeObserver after mount, in canvas % units. Only used when h === 'auto'. */
+  measuredH?: number;
 }
 
 export type Widget = WidgetBase;

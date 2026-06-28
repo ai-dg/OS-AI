@@ -12,7 +12,7 @@ export interface CanvasCommand {
   x?: number;
   y?: number;
   w?: number;
-  h?: number;
+  h?: number | 'auto';
   scale?: number;
   data?: Record<string, unknown>;
 }
@@ -108,6 +108,10 @@ const TYPE_MAP: Record<string, WidgetType> = {
   "image-widget":    "image-widget",
   "network-graph":   "network-graph",
   "circle-stat":     "circle-stat",
+  "key-value-card":  "key-value-card",
+  "timeline":        "timeline",
+  "callout":         "callout",
+  "comparison-card": "comparison-card",
   // pass-through for any legacy name Claude might emit
   text:    "text",
   heading: "heading",

@@ -7,7 +7,7 @@ export interface SpawnArgs {
   x?: number;
   y?: number;
   w?: number;
-  h?: number;
+  h?: number | 'auto';
   data?: Record<string, unknown>;
 }
 
@@ -32,6 +32,7 @@ export interface CanvasState {
   spawn: (args: SpawnArgs) => void;
   despawn: (id: string) => void;
   update: (id: string, patch: Partial<Widget>) => void;
+  resizeWidget: (id: string, h: number) => void;
   zoom: (id: string, scale: number) => void;
   setOpacity: (id: string, opacity: number) => void;
   highlight: (id: string) => void;
@@ -101,6 +102,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((s) =>
       s.widgets[id]
         ? { widgets: { ...s.widgets, [id]: { ...s.widgets[id], ...patch } } }
+        : s
+    ),
+
+  resizeWidget: (id, h) =>
+    set((s) =>
+      s.widgets[id]
+        ? { widgets: { ...s.widgets, [id]: { ...s.widgets[id], measuredH: h } } }
         : s
     ),
 

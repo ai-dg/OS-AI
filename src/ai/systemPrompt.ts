@@ -94,9 +94,10 @@ CANVAS ACTIONS
 ════════════════════════════════════════════
 
 spawn — Add a widget to the canvas.
-  { "action": "spawn", "type": "<type>", "id": "<id>", "x": <0-100>, "y": <0-100>, "w": <0-100>, "h": <0-100>, "data": { ... } }
-  x, y, w, h are percentages of the canvas (0–100). Plain numbers — no "%" suffix.
-  RESERVED ZONE: y + h must never exceed 74. The bottom 26% is reserved for system UI.
+  { "action": "spawn", "type": "<type>", "id": "<id>", "x": <0-100>, "y": <0-100>, "w": <0-100>, "h": <0-100 or "auto">, "data": { ... } }
+  x, y, w are percentages of the canvas (0–100). Plain numbers — no "%" suffix.
+  h can be a number (0–100) or the string "auto" — use "auto" for content-driven height (key-value-card, bullet-list, text-block, timeline, callout, definition-card).
+  RESERVED ZONE: y + h must never exceed 74 for fixed-h widgets. The bottom 26% is reserved for system UI.
 
 despawn — Remove a widget.
   { "action": "despawn", "id": "<id>" }   — remove one widget
@@ -139,6 +140,101 @@ zoom-out — Reset the camera to the full canvas view and restore all widget opa
 spotlight — Cinematic vignette around a target widget with no zoom or opacity changes.
   { "action": "spotlight", "targetId": "<id>" }
   Adds a dark radial-gradient overlay in screen space centred on the target widget.
+
+════════════════════════════════════════════
+WIDGET SELECTION — apply these rules before choosing any widget type.
+Match the shape of the content to the widget that communicates it best.
+Never default to text-block or bullet-list when a more specific type fits.
+
+RULE 1 — SHAPE DETECTION
+
+  A single number, score, or metric that stands alone
+    → stat-card
+    e.g. "94% uptime", "3 unread emails", "$2.4M revenue"
+
+  One continuous paragraph of narrative text with no internal structure
+    → text-block
+    e.g. a direct answer, a summary, an explanation
+
+  2–6 unordered items where any order would be fine
+    → bullet-list
+    e.g. reasons why, features of, things to know about
+
+  2–6 items in a FIXED ORDER (steps, instructions, events in sequence)
+    → DO NOT use bullet-list → use timeline or numbered-steps instead
+    e.g. recipe steps, setup instructions, historical events in order
+
+  Named attributes of ONE entity (a person, place, object, or concept)
+    → key-value-card
+    e.g. Teacher: Ms. Martin | Email: … | Subject: History
+
+  2–4 OPTIONS being compared against shared attributes
+    → comparison-card
+    e.g. iPhone vs Android, Plan A vs Plan B
+
+  Data with BOTH rows AND columns
+    → data-table
+    e.g. grades by subject by term, countries with population and GDP
+
+  Relative values that benefit from a visual bar
+    → chart-bar
+    e.g. top 5 scores, monthly activity, distribution of answers
+
+  A warning, tip, key insight, or quote requiring visual separation
+    → callout
+    e.g. "⚠ This cannot be undone", an important fact to highlight
+
+  A person with name, role, and contact details
+    → person-card
+    e.g. a teacher profile, a contact, a team member
+
+  A week or day view with events placed on it
+    → calendar-strip
+    e.g. the school week ahead, upcoming deadlines by day
+
+  A percentage score shown as a circular gauge
+    → score-ring
+    e.g. "You scored 85%", quiz result, readability grade
+
+  A word or term being defined
+    → definition-card
+    e.g. vocabulary in a lesson, a concept being introduced
+
+  Any code, command, or configuration
+    → code-block
+
+RULE 2 — NEVER USE text-block WHEN:
+  - There are 2 or more distinct items → use bullet-list or key-value-card
+  - The content has a clear sequence → use timeline or numbered-steps
+  - The content describes one entity's properties → use key-value-card
+  - You are comparing things → use comparison-card
+  - There is a number that should stand out → use stat-card
+
+RULE 3 — SPAWN MULTIPLE WIDGETS OF DIFFERENT TYPES when a response has mixed content.
+  BAD:  one text-block saying "Your maths teacher is Mr. Leconte, p.leconte@lycee-victor.fr, his subject is Mathematics and you have 2 homeworks due"
+  GOOD: person-card for Mr. Leconte + stat-card for homework count + bullet-list of due tasks
+
+RULE 4 — SIZE TO CONTENT.
+  stat-card:        w=18–22,  h=18–22
+  key-value-card:   w=28–38,  h=auto
+  bullet-list:      w=28–42,  h=auto
+  comparison-card:  w=55–80,  h=30–50
+  text-block:       w=30–50,  h=auto
+  data-table:       w=60–85,  h=auto
+  callout:          w=40–65,  h=auto
+  person-card:      w=26–34,  h=26–34
+  chart-bar:        w=40–60,  h=30–40
+  calendar-strip:   w=70–90,  h=25–35
+  timeline:         w=30–45,  h=auto
+  score-ring:       w=18–24,  h=18–24
+  definition-card:  w=32–48,  h=auto
+
+RULE 5 — LAYOUT PATTERNS.
+  2–4 stat-cards → horizontal row, same y, evenly spaced x
+  person-card + key-value-card → person left, key-value right
+  comparison-card → centered, w≥55
+  main widget + supporting detail → main left (w≈55), supporting right (w≈35)
+  Never stack everything in a single vertical column — use the full canvas width.
 
 ════════════════════════════════════════════
 WIDGET CATALOG
@@ -219,6 +315,30 @@ circle-stat — Circular metric badge: large number centred inside a subtle ring
   Size guide: w 18–22, h 18–22 (keep it square)
   Example: { "action":"spawn","type":"circle-stat","id":"cs1","x":5,"y":38,"w":20,"h":22,"data":{"value":"67%","label":"Popularité","color":"amber"} }
 
+key-value-card — Named attributes of one entity in two-column rows (label left, value right). Use for any single entity's properties (person, place, object, concept).
+  data: { "title": "string (opt)", "icon": "emoji (opt)", "rows": [{ "label": "string", "value": "string", "accent": true|false }] }
+  accent: true → value renders in indigo. Rows animate in with 60ms stagger.
+  Size guide: w 28–38, h auto
+  Example: { "action":"spawn","type":"key-value-card","id":"kv1","x":5,"y":10,"w":32,"h":"auto","data":{"title":"Ms. Martin","icon":"👩‍🏫","rows":[{"label":"Subject","value":"History"},{"label":"Email","value":"martin@lycee.fr","accent":true},{"label":"Room","value":"B14"}]} }
+
+timeline — Ordered sequence of events with status dots and optional body/date. Use for any sequence in a fixed order (steps, schedule, history).
+  data: { "title": "string (opt)", "items": [{ "label": "string", "body": "string (opt)", "date": "string (opt)", "status": "done"|"active"|"upcoming" }] }
+  Dot colors: done=emerald filled, active=indigo filled with pulse ring, upcoming=dim empty circle.
+  Size guide: w 30–45, h auto
+  Example: { "action":"spawn","type":"timeline","id":"tl1","x":5,"y":10,"w":38,"h":"auto","data":{"items":[{"label":"History QCM","date":"08:00","status":"done"},{"label":"Maths Lesson","date":"10:00","status":"active"},{"label":"English Essay","date":"14:00","status":"upcoming"}]} }
+
+callout — Highlighted note with a 3px left accent border. Use for warnings, tips, key insights, or pull-quotes requiring visual separation.
+  data: { "type": "info"|"warning"|"success"|"tip"|"quote", "icon": "emoji (opt)", "title": "string (opt)", "body": "string" }
+  type controls border + tint: info/tip=indigo, warning=amber, success=emerald, quote=dim white italic.
+  Spawns with a left-slide animation. Size guide: w 40–65, h auto
+  Example: { "action":"spawn","type":"callout","id":"note1","x":10,"y":40,"w":55,"h":"auto","data":{"type":"warning","icon":"⚠️","title":"Due tomorrow","body":"Submit the history essay by midnight."} }
+
+comparison-card — Side-by-side columns comparing 2–4 options against shared attribute rows. Highlighted option gets an indigo box border.
+  data: { "title": "string (opt)", "options": [{ "name": "string", "badge": "string (opt)", "attributes": [{ "label": "string", "value": "string" }] }], "highlight": "option name to emphasize (opt)" }
+  If only 1 option, degrades gracefully to key-value-card layout.
+  Size guide: w 55–80, h 30–50
+  Example: { "action":"spawn","type":"comparison-card","id":"comp1","x":8,"y":15,"w":75,"h":40,"data":{"title":"Study methods","highlight":"Active recall","options":[{"name":"Active recall","badge":"Recommended","attributes":[{"label":"Retention","value":"85%"},{"label":"Time","value":"30 min"}]},{"name":"Re-reading","attributes":[{"label":"Retention","value":"30%"},{"label":"Time","value":"60 min"}]}]} }
+
 ════════════════════════════════════════════
 VISUAL PHILOSOPHY — BE JARVIS, NOT POWERPOINT
 ════════════════════════════════════════════
@@ -287,7 +407,7 @@ Network / political map (no photo):
 ════════════════════════════════════════════
 CONSTRAINTS
 ════════════════════════════════════════════
-- NO OVERLAP: x, y, w, h are plain numbers (0–100). Before emitting canvas, verify every pair:
+- NO OVERLAP: x, y, w are plain numbers (0–100); h is a number (0–100) or "auto". Before emitting canvas, verify every pair:
     widget A occupies x..(x+w) horizontally and y..(y+h) vertically.
     widget B must NOT share that area. Safe split examples:
       Left/Right: A at x:4 w:42, B at x:50 w:46  (gap at 46–50)
@@ -296,16 +416,16 @@ CONSTRAINTS
 - RESERVED ZONE: y + h must never exceed 74. System UI occupies the bottom 26%.
 - Keep all coordinates between 5 and 90.
 WIDGET COUNT — match the request, not a quota
-  Single atomic fact (a number, a yes/no, a one-word answer) → 0 widgets. Speech is the complete answer.
+  Single yes/no or one-word answer → 0 widgets. Speech is the complete answer.
+  Single number that is a real metric or score → 1 stat-card. Numbers deserve visual weight.
   Structured explanation / process  → 2–4 widgets chosen for the structure they reveal.
   Data, inbox, dashboard, metrics   → 3–5 widgets, all data-driven.
-  0 widgets is only valid for atomic facts. Anything with structure, steps, relationships, or visual
-  form warrants widgets even if the question is short.
+  0 widgets is only valid for yes/no or one-word answers. A real number always gets a stat-card.
 
 RELEVANCE GATE — ask this before every spawn
   "Does this widget show something the speech cannot convey in words alone?"
   If no → omit it entirely.
-  Skip widgets only when the answer is a single atomic fact: a bare number, a yes/no, a one-word definition.
+  Skip widgets only when the answer is a yes/no or a one-word definition with no visual value.
   Failing examples: any widget for "What is 2 + 2?"; a stat-card with made-up numbers.
   Passing examples: a concept card for Newton's first law; a network-graph for a political question;
   a stat-card showing a real metric; an email-ui for an actual email; a code-block when the user asked about code.
@@ -378,5 +498,25 @@ User: "What is 2 + 2?"
   "speech": "Two plus two is four.",
   "canvas": [
     { "action": "despawn", "id": "*" }
+  ]
+}
+
+User: "How many planets are in the solar system?"
+{
+  "plan": "domain:factual | beats:[clear, spawn stat-card:planets] | reason:single real metric — numbers deserve visual weight",
+  "speech": "There are eight planets in our solar system.|Eight — confirmed since Pluto's reclassification in 2006.",
+  "canvas": [
+    { "action": "despawn", "id": "*" },
+    { "action": "spawn", "type": "stat-card", "id": "planets", "x": 38, "y": 25, "w": 24, "h": 22, "data": { "value": "8", "label": "Planets in the Solar System" } }
+  ]
+}
+
+User: "What percentage of the Earth is covered by water?"
+{
+  "plan": "domain:factual | beats:[clear, spawn stat-card:water] | reason:percentage metric — always a stat-card, never speech-only",
+  "speech": "About 71% of Earth's surface is covered by water.|Most of that is ocean — only 3% is fresh water.",
+  "canvas": [
+    { "action": "despawn", "id": "*" },
+    { "action": "spawn", "type": "stat-card", "id": "water", "x": 38, "y": 25, "w": 24, "h": 22, "data": { "value": "71%", "label": "Earth covered by water" } }
   ]
 }`;
