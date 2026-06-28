@@ -31,6 +31,16 @@ function edgePt(
        :                     { x: cx,          y: w.y + w.h };
 }
 
+// Accent palette for connecting arrows — the agent picks one via data.color.
+const ARROW_COLORS: Record<string, string> = {
+  indigo:  "#818cf8",
+  emerald: "#34d399",
+  amber:   "#fbbf24",
+  sky:     "#38bdf8",
+  red:     "#f87171",
+  zinc:    "#71717a",
+};
+
 function ConnectingArrows({
   widgets,
   order,
@@ -47,18 +57,37 @@ function ConnectingArrows({
 
   if (connections.length === 0) return null;
 
+  // Render in true CSS pixels: the SVG is fullscreen (inset-0), so user units map
+  // 1:1 to screen px. This keeps curves, arrowheads and labels undistorted
+  // (a 0–100 viewBox with preserveAspectRatio="none" would stretch them on wide
+  // screens). Canvas %→px uses the same window dims the camera transform reads.
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  const px = (p: { x: number; y: number }) => ({ x: (p.x / 100) * W, y: (p.y / 100) * H });
+
   return (
     <svg
       className="pointer-events-none absolute inset-0"
       width="100%"
       height="100%"
-      style={{ zIndex: 5 }}
+      style={{ zIndex: 5, overflow: "visible" }}
       aria-hidden
     >
       <defs>
-        <marker id="canvas-tip" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">
-          <polygon points="0 0, 7 2.5, 0 5" fill="#3f3f46" />
-        </marker>
+        {Object.entries(ARROW_COLORS).map(([name, col]) => (
+          <marker
+            key={name}
+            id={`canvas-tip-${name}`}
+            markerWidth="10"
+            markerHeight="10"
+            refX="7"
+            refY="5"
+            orient="auto"
+            markerUnits="userSpaceOnUse"
+          >
+            <path d="M0,0 L10,5 L0,10 Z" fill={col} />
+          </marker>
+        ))}
       </defs>
 
       {connections.map((a) => {
@@ -70,21 +99,85 @@ function ConnectingArrows({
         const dy = (tgt.y + tgt.h / 2) - (src.y + src.h / 2);
         const horiz = Math.abs(dx) >= Math.abs(dy);
 
-        const start = horiz
+        const start = px(horiz
           ? edgePt(src, dx > 0 ? "right"  : "left")
-          : edgePt(src, dy > 0 ? "bottom" : "top");
-        const end = horiz
+          : edgePt(src, dy > 0 ? "bottom" : "top"));
+        const end = px(horiz
           ? edgePt(tgt, dx > 0 ? "left"  : "right")
-          : edgePt(tgt, dy > 0 ? "top"   : "bottom");
+          : edgePt(tgt, dy > 0 ? "top"   : "bottom"));
+
+        // Gentle curve: bow the midpoint perpendicular to the connection so the
+        // link reads as a deliberate "idea → idea" relationship, not a ruler line.
+        const mx = (start.x + end.x) / 2;
+        const my = (start.y + end.y) / 2;
+        const nx = -(end.y - start.y);
+        const ny =  (end.x - start.x);
+        const nlen = Math.hypot(nx, ny) || 1;
+        const dist = Math.hypot(end.x - start.x, end.y - start.y);
+        const bow  = Math.min(dist * 0.16, 64); // curve depth in px, capped
+        const cxp = mx + (nx / nlen) * bow;
+        const cyp = my + (ny / nlen) * bow;
+        const d = `M ${start.x} ${start.y} Q ${cxp} ${cyp} ${end.x} ${end.y}`;
+
+        const colKey = (a.data.color as string) in ARROW_COLORS ? (a.data.color as string) : "indigo";
+        const col    = ARROW_COLORS[colKey];
+        const label  = typeof a.data.label === "string" ? a.data.label : "";
+
+        // Label anchor sits on the curve apex (quadratic point at t=0.5).
+        const lx = 0.25 * start.x + 0.5 * cxp + 0.25 * end.x;
+        const ly = 0.25 * start.y + 0.5 * cyp + 0.25 * end.y;
 
         return (
-          <line
-            key={a.id}
-            x1={`${start.x}%`} y1={`${start.y}%`}
-            x2={`${end.x}%`}   y2={`${end.y}%`}
-            stroke="#3f3f46" strokeWidth="1" strokeDasharray="5 4"
-            markerEnd="url(#canvas-tip)"
-          />
+          <g key={a.id}>
+            {/* Soft glow underlay */}
+            <motion.path
+              d={d}
+              fill="none"
+              stroke={col}
+              strokeOpacity={0.16}
+              strokeWidth={6}
+              strokeLinecap="round"
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: 1 }}
+              transition={{ duration: 0.55, ease: "easeInOut" }}
+            />
+            {/* Main dashed connector, drawn in */}
+            <motion.path
+              d={d}
+              fill="none"
+              stroke={col}
+              strokeWidth={1.6}
+              strokeDasharray="6 5"
+              strokeLinecap="round"
+              markerEnd={`url(#canvas-tip-${colKey})`}
+              initial={{ pathLength: 0 }}
+              animate={{ pathLength: 1 }}
+              transition={{ duration: 0.55, ease: "easeInOut" }}
+            />
+            {label && (
+              <motion.text
+                x={lx}
+                y={ly}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fill={col}
+                style={{
+                  fontSize: 11,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  letterSpacing: "0.04em",
+                  paintOrder: "stroke",
+                  stroke: "#080808",
+                  strokeWidth: 4,
+                  strokeLinejoin: "round",
+                }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.45, duration: 0.3 }}
+              >
+                {label}
+              </motion.text>
+            )}
+          </g>
         );
       })}
     </svg>
@@ -287,6 +380,7 @@ export function Canvas({ onSubmit, isThinking, chatBusy, voiceLevelRef }: Canvas
   const cameraMode     = useCanvasStore((s) => s.cameraMode);
   const cameraTargetId = useCanvasStore((s) => s.cameraTargetId);
   const cameraZoomScale= useCanvasStore((s) => s.cameraZoomScale);
+  const highlightedId  = useCanvasStore((s) => s.highlightedId);
   const cameraOffsetX  = useCanvasStore((s) => s.cameraOffsetX);
   const cameraOffsetY  = useCanvasStore((s) => s.cameraOffsetY);
   const isAISpeaking   = useCanvasStore((s) => s.isAISpeaking);
@@ -488,6 +582,9 @@ export function Canvas({ onSubmit, isThinking, chatBusy, voiceLevelRef }: Canvas
                 ? 0.2
                 : w.opacity;
 
+            // Emphasis pulse — the agent's "highlight" action glows one widget.
+            const isHighlighted = highlightedId === id;
+
             return (
               <motion.div
                 key={id}
@@ -497,7 +594,7 @@ export function Canvas({ onSubmit, isThinking, chatBusy, voiceLevelRef }: Canvas
                   top:    `${w.y}%`,
                   width:  `${w.w}%`,
                   height: `${w.h}%`,
-                  zIndex: 10 + i,
+                  zIndex: isHighlighted ? 400 : 10 + i,
                   ...outerStyle,
                   cursor: "pointer",
                 }}
@@ -506,7 +603,17 @@ export function Canvas({ onSubmit, isThinking, chatBusy, voiceLevelRef }: Canvas
                   else zoomCamera(id, 1.6);
                 }}
                 initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: effectiveOpacity, scale: w.scale }}
+                animate={{
+                  opacity: effectiveOpacity,
+                  scale: isHighlighted ? Math.max(w.scale, 1.04) : w.scale,
+                  boxShadow: isHighlighted
+                    ? [
+                        "0 0 0px 0px rgba(129,140,248,0)",
+                        "0 0 26px 5px rgba(129,140,248,0.55)",
+                        "0 0 12px 2px rgba(129,140,248,0.30)",
+                      ]
+                    : "0 0 0px 0px rgba(129,140,248,0)",
+                }}
                 exit={{
                   opacity: 0,
                   scale: 0.95,
@@ -515,6 +622,9 @@ export function Canvas({ onSubmit, isThinking, chatBusy, voiceLevelRef }: Canvas
                 transition={{
                   opacity: CAMERA_TRANSITION,
                   scale:   { duration: 0.3, ease: "easeOut" },
+                  boxShadow: isHighlighted
+                    ? { duration: 1.4, repeat: Infinity, repeatType: "reverse", ease: "easeInOut" }
+                    : { duration: 0.3 },
                 }}
               >
                 <div className={innerCls}>

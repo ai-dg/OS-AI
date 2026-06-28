@@ -33,6 +33,30 @@ function list(v: unknown): string[] {
   return Array.isArray(v) ? v.map(String) : [];
 }
 
+// ─── Accent palette ─────────────────────────────────────────────────────────
+// Lets the AI tint any widget via data.accent. Keeps the zinc base but adds the
+// pops of colour that make a dense canvas readable at a glance.
+
+interface Accent {
+  text:   string; // bright foreground (numbers, markers)
+  bar:    string; // solid edge / accent stripe
+  soft:   string; // low-alpha fill
+  border: string; // hairline border
+}
+
+const ACCENTS: Record<string, Accent> = {
+  indigo:  { text: "#a5b4fc", bar: "#6366f1", soft: "rgba(99,102,241,0.10)",  border: "rgba(99,102,241,0.30)" },
+  emerald: { text: "#6ee7b7", bar: "#10b981", soft: "rgba(16,185,129,0.10)",  border: "rgba(16,185,129,0.30)" },
+  amber:   { text: "#fcd34d", bar: "#f59e0b", soft: "rgba(245,158,11,0.10)",  border: "rgba(245,158,11,0.30)" },
+  sky:     { text: "#7dd3fc", bar: "#0ea5e9", soft: "rgba(14,165,233,0.10)",  border: "rgba(14,165,233,0.30)" },
+  red:     { text: "#fca5a5", bar: "#ef4444", soft: "rgba(239,68,68,0.10)",   border: "rgba(239,68,68,0.28)"  },
+  zinc:    { text: "#e4e4e7", bar: "#52525b", soft: "rgba(255,255,255,0.04)", border: "rgba(255,255,255,0.10)" },
+};
+
+function accent(v: unknown): Accent {
+  return (typeof v === "string" && ACCENTS[v]) || ACCENTS.zinc;
+}
+
 // ─── Syntax highlighting ──────────────────────────────────────────────────────
 
 const KEYWORDS = new Set([
@@ -94,52 +118,100 @@ const HeadingWidget: Renderer = (w) => (
   </div>
 );
 
-const BulletsWidget: Renderer = (w) => (
-  <ul className="flex h-full flex-col justify-center gap-3">
-    {list(w.data.items).map((item, i) => (
-      <motion.li
-        key={i}
-        className="flex items-start gap-3"
-        initial={{ opacity: 0, x: -10 }}
-        animate={{ opacity: 1, x: 0 }}
-        transition={{ duration: 0.22, delay: i * 0.15, ease: "easeOut" }}
+const BulletsWidget: Renderer = (w) => {
+  const a = accent(w.data.accent);
+  const marker = typeof w.data.accent === "string" ? a.bar : "#10b981";
+  return (
+    <ul className="flex h-full flex-col justify-center gap-3">
+      {list(w.data.items).map((item, i) => (
+        <motion.li
+          key={i}
+          className="flex items-start gap-3"
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.22, delay: i * 0.12, ease: "easeOut" }}
+        >
+          <span
+            className="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full"
+            style={{ background: marker }}
+          />
+          <span className="font-mono text-xs leading-relaxed text-zinc-300">{item}</span>
+        </motion.li>
+      ))}
+    </ul>
+  );
+};
+
+const StatWidget: Renderer = (w) => {
+  const a = accent(w.data.accent);
+  const delta = s(w.data.delta);
+  // trend tints the delta chip: "up" = emerald, "down" = red, default = accent.
+  const trend = s(w.data.trend);
+  const deltaColor =
+    trend === "up" ? ACCENTS.emerald : trend === "down" ? ACCENTS.red : a;
+  return (
+    <div className="relative flex h-full flex-col items-center justify-center gap-2 text-center">
+      {/* top accent rule */}
+      <div
+        className="absolute left-0 right-0 top-0 h-[2px]"
+        style={{ background: a.bar, opacity: 0.8 }}
+      />
+      <motion.div
+        className="font-mono font-bold leading-none tracking-tight"
+        style={{ fontSize: 46, color: a.text }}
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
       >
-        <span className="mt-0.5 select-none font-mono text-xs text-emerald-500">›</span>
-        <span className="font-mono text-xs leading-relaxed text-zinc-300">{item}</span>
-      </motion.li>
-    ))}
-  </ul>
-);
-
-const StatWidget: Renderer = (w) => (
-  <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-    <div
-      className="font-mono font-bold leading-none tracking-tight text-white"
-      style={{ fontSize: 48 }}
-    >
-      {s(w.data.value)}
-    </div>
-    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-600">
-      {s(w.data.label)}
-    </div>
-  </div>
-);
-
-const CardWidget: Renderer = (w) => (
-  <div className="flex h-full flex-col gap-3">
-    {s(w.data.title) && (
-      <div className="border-b border-zinc-800 pb-2.5">
-        <span className="select-none font-mono text-[10px] text-zinc-600">// </span>
-        <span className="font-mono text-sm font-semibold text-zinc-100">
-          {s(w.data.title)}
+        {s(w.data.value)}
+      </motion.div>
+      {delta && (
+        <span
+          className="font-mono text-[10px] font-semibold"
+          style={{ color: deltaColor.text }}
+        >
+          {trend === "up" ? "▲ " : trend === "down" ? "▼ " : ""}
+          {delta}
         </span>
+      )}
+      <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-600">
+        {s(w.data.label)}
       </div>
-    )}
-    <p className="font-mono text-xs leading-relaxed text-zinc-400">
-      {s(w.data.body)}
-    </p>
-  </div>
-);
+    </div>
+  );
+};
+
+const CardWidget: Renderer = (w) => {
+  const a = accent(w.data.accent);
+  const hasAccent = typeof w.data.accent === "string" && w.data.accent !== "zinc";
+  return (
+    <div className="relative flex h-full gap-3">
+      {/* Left accent spine — turns a plain box into a labelled idea. */}
+      <div
+        className="shrink-0 self-stretch rounded-full"
+        style={{ width: 3, background: hasAccent ? a.bar : "#27272a" }}
+      />
+      <div className="flex min-w-0 flex-1 flex-col gap-3">
+        {s(w.data.title) && (
+          <div
+            className="pb-2.5"
+            style={{ borderBottom: `1px solid ${hasAccent ? a.border : "#27272a"}` }}
+          >
+            <span className="select-none font-mono text-[10px]" style={{ color: a.bar }}>
+              ▸{" "}
+            </span>
+            <span className="font-mono text-sm font-semibold text-zinc-100">
+              {s(w.data.title)}
+            </span>
+          </div>
+        )}
+        <p className="font-mono text-xs leading-relaxed text-zinc-400">
+          {s(w.data.body)}
+        </p>
+      </div>
+    </div>
+  );
+};
 
 const ArrowWidget: Renderer = (w) => {
   // Connecting arrows (data.from + data.to) are rendered by the SVG overlay

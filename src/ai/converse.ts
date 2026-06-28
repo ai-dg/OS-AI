@@ -45,7 +45,7 @@ export interface ConverseResult {
 // ─── Sync canvas action format ────────────────────────────────────────────────
 
 export interface SyncCanvasAction {
-  action: "spawn" | "despawn" | "zoom" | "zoom-out" | "spotlight" | "hold"
+  action: "spawn" | "despawn" | "zoom" | "zoom-out" | "spotlight" | "hold" | "highlight"
         | "pan-zoom" | "pan" | "fit-all";
   /** Widget id for spawn/despawn, or "*" to clear all. */
   id?: string;
@@ -107,6 +107,10 @@ function executeCanvasAction(action: SyncCanvasAction): void {
       break;
     case "spotlight":
       if (action.targetId) store.spotlightCamera(action.targetId);
+      break;
+    case "highlight":
+      // Pulse a single widget with an emphasis glow — no camera movement.
+      if (action.targetId) store.highlightWidget(action.targetId);
       break;
     case "pan-zoom":
       store.panZoom({ region: action.region, x: action.x, y: action.y, scale: action.scale });

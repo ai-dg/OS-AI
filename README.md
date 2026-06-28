@@ -1,7 +1,13 @@
-# JARVIS — AI-Native OS Interface
-**Anthropic × Y Combinator Hackathon | 42AI | 24h**
+# FLOW
+
+### The OS overlay for the AI era
+
+**No files. No windows. No learning curve.**
+A single intelligent interface that handles everything — so you never have to.
 
 > One black screen. You speak. The AI assembles the UI around you in real time.
+
+*Anthropic × Y Combinator Hackathon · 42AI · 24h build*
 
 ---
 
@@ -9,88 +15,49 @@
 
 ```bash
 npm install
-# Add your Anthropic API key (local demo only — key ships to the browser):
-echo "VITE_ANTHROPIC_API_KEY=sk-ant-..." > .env.local
-npm run dev
-# → http://localhost:5173
+
+# Copy the template, then fill in your keys (client-side, local demo only):
+cp .env.local.example .env.local
+# open .env.local and set VITE_ANTHROPIC_API_KEY (+ optional VITE_ELEVENLABS_API_KEY)
+
+npm run dev      # → http://localhost:5173
 ```
 
-Use **Chrome or Edge** — the demo relies on the Web Speech API.
+Use **Chrome or Edge**. `VITE_ANTHROPIC_API_KEY` is required; `VITE_ELEVENLABS_API_KEY` is optional (premium neural voice — falls back to the browser voice without it).
 
-**Controls:**
-- `Space` (hold) — push to talk
-- `Esc` — clear the canvas
-- Click a node on the left rail — time-travel to a previous canvas state
-
----
-
-## What This Is
-
-A proof-of-concept for an AI-native OS interface. The user speaks; Claude responds two ways at once:
-1. **Speech** — streamed sentence-by-sentence to an ephemeral ticker and spoken aloud, then erased.
-2. **Canvas actions** — tool calls that spawn / remove / zoom / highlight widgets on a black canvas.
-
-No static UI. No windows. No apps. The interface is assembled in real time by the AI.
+**Controls**
+- `Space` (hold) — push to talk · `/` — type instead
+- `Esc` — clear canvas · `Ctrl+C` — cancel the AI mid-answer
+- `Alt+1/2/3` — switch project · click a node — time-travel a past canvas
 
 ---
 
-## How the AI drives the UI
+## What it is
 
-Instead of a JSON contract, Claude uses **tool calling** (Vercel AI SDK). The tools run
-client-side and mutate the canvas store directly, so widgets appear live while the AI keeps talking:
+A proof-of-concept AI-native OS. You speak; Claude answers two ways at once — **out loud**, and by **assembling the screen**. No static UI, no apps: the interface is built in real time, then cleared for the next intent.
 
-| Tool | Effect |
-|---|---|
-| `renderWidget` | spawn/update a widget (`type`, `x/y/w/h` %, `data`) |
-| `removeWidget` | remove a widget by id |
-| `zoomWidget` | scale a widget for emphasis |
-| `setOpacity` | fade a widget in/out |
-| `highlightWidget` | spotlight one widget, dim the rest |
-| `clearCanvas` | reset the canvas on topic change |
-
-The widget databank lives in `src/widgets/registry.tsx`: `heading`, `text`, `bullets`,
-`stat`, `card`, `arrow`, `image`, `code`, `email`.
-
----
-
-## Project Structure
+## How it works
 
 ```
-src/
-  App.tsx              Orchestrator: voice ↔ AI ↔ canvas ↔ tree
-  canvas/Canvas.tsx    Full-screen black canvas, camera zoom, widget layout
-  widgets/             types.ts + registry.tsx (the widget databank)
-  ai/
-    client.ts          Browser-side Anthropic provider
-    tools.ts           UI tools (client-side execute → canvas store)
-    systemPrompt.ts    JARVIS persona + widget catalog
-    converse.ts        streamText loop, sentence detection
-  voice/useSpeech.ts   Web Speech API: recognition + synthesis
-  components/Ticker.tsx Ephemeral spoken-sentence display
-  tree/                ConversationTree.tsx — git-like snapshot rail
-  store/               canvasStore.ts, treeStore.ts (Zustand)
-.claude/
-  vision.md, scope.md  Project intent and boundaries
-CLAUDE.md              ← Claude Code reads this first.
+voice (Whisper, local) → Claude → { speech, canvas } → spoken + drawn, in sync
 ```
 
----
-
-## Gmail action (demo)
-
-When you ask about email, Claude renders `email` widgets with realistic **mocked** data.
-Real Gmail MCP / OAuth wiring is intentionally out of scope for the 24h prototype — see `.claude/scope.md`.
-
----
-
-## Environment Variables
-
-```
-VITE_ANTHROPIC_API_KEY=   # Required — Anthropic API key (client-side, local demo only)
-```
-
----
+- **One streamed JSON contract**, not tool calls: Claude returns `{ speech, canvas }`. `speech` is spoken sentence-by-sentence; each `|`-segment is locked to one `canvas` action (spawn / zoom / pan / despawn…) on a virtual **spatial canvas** the camera flies over.
+- **Voice** — STT: local **Whisper** in a Web Worker (push-to-talk). TTS: **ElevenLabs** neural voice, pre-synthesized during generation for instant, gap-free playback (native voice fallback).
+- **Scripted demo** runs on two independent agents — an **intent router** that maps each utterance to a feature, and a **progress tracker** that marks demo steps — so the school-day demo flows in any order.
 
 ## Stack
 
-Vite · React 18 · TypeScript · Tailwind v4 · Vercel AI SDK (`@ai-sdk/anthropic`) · Zustand · Framer Motion
+React 18 · Vite · TypeScript · Tailwind v4 · Vercel AI SDK (`@ai-sdk/anthropic`) · Zustand · Framer Motion · Whisper (`@huggingface/transformers`) · ElevenLabs
+
+## Layout
+
+```
+src/
+  App.tsx            Orchestrator: voice ↔ AI ↔ canvas ↔ tree
+  ai/                converse · systemPrompt · intentRouter · progressTracker · lessonTutor
+  voice/             useWhisper (STT) · AudioSynthesisService (TTS)
+  canvas/ widgets/   spatial canvas + widget registry
+  store/ projects/   Zustand state + seeded school data
+CLAUDE.md            ← Claude Code reads this first.
+```

@@ -29,6 +29,8 @@ export interface CanvasState {
   cameraTargetId: string | null;
   /** Scale factor applied to the canvas transform. */
   cameraZoomScale: number;
+  /** Widget currently pulsing with an emphasis glow (null = none). Transient. */
+  highlightedId: string | null;
 
   // ── Spatial canvas fields ─────────────────────────────────────────────────
   /** Camera position in canvas units (top-left of viewport). Default: 0. */
@@ -57,6 +59,10 @@ export interface CanvasState {
   spotlightCamera: (targetId: string) => void;
   resetCamera: () => void;
 
+  /** Pulse a single widget with an emphasis glow (no camera movement). */
+  highlightWidget: (targetId: string) => void;
+  /** Stop any active emphasis glow. */
+  clearHighlight: () => void;
   /** Pan + zoom camera to a named region or explicit coordinates. */
   panZoom: (target: { region?: string; x?: number; y?: number; scale?: number }) => void;
   /** Relative pan by (dx, dy) canvas units. */
@@ -91,6 +97,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   cameraMode: "idle",
   cameraTargetId: null,
   cameraZoomScale: 1,
+  highlightedId: null,
   cameraOffsetX: 0,
   cameraOffsetY: 0,
   minZoomScale: 0.5,
@@ -128,6 +135,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         order: s.order.filter((w) => w !== id),
         focusedId: s.focusedId === id ? null : s.focusedId,
         cameraTargetId: s.cameraTargetId === id ? null : s.cameraTargetId,
+        highlightedId: s.highlightedId === id ? null : s.highlightedId,
         minZoomScale: computeMinZoom(Object.values(rest)),
       };
     }),
@@ -168,6 +176,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       cameraMode: "idle",
       cameraTargetId: null,
       cameraZoomScale: 1,
+      highlightedId: null,
       cameraOffsetX: 0,
       cameraOffsetY: 0,
       minZoomScale: 0.5,
@@ -249,6 +258,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       minZoomScale: min,
     });
   },
+
+  // ── Emphasis (pulse glow, independent of the camera) ───────────────────────
+
+  highlightWidget: (targetId) =>
+    set((s) => (s.widgets[targetId] ? { highlightedId: targetId } : s)),
+
+  clearHighlight: () => set({ highlightedId: null }),
 
   // ── Snapshot ──────────────────────────────────────────────────────────────
 
