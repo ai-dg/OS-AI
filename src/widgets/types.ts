@@ -24,7 +24,9 @@ export type WidgetType =
   | "image-widget"
   | "network-graph"
   | "circle-stat"
-  | "math-block";
+  | "math-block"
+  // School demo widgets
+  | "task-list";
 
 /** Position + size are percentages of the viewport (0–100). */
 export interface WidgetLayout {

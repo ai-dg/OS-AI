@@ -3,6 +3,7 @@ import type { ModelMessage } from "ai";
 import { Canvas } from "@/canvas/Canvas";
 import { ResponseBox } from "@/components/ResponseBox";
 import { ProjectLabel } from "@/components/ProjectLabel";
+import { DemoControls } from "@/components/DemoControls";
 import { ConversationTree } from "@/tree/ConversationTree";
 import { JarvisOrb } from "@/components/JarvisOrb";
 import { useWhisper } from "@/voice/useWhisper";
@@ -264,6 +265,7 @@ export default function App() {
       />
       <ProjectLabel />
       <ConversationTree />
+      <DemoControls />
 
       {/* Mute toggle — silence AI narration (e.g. while programming / testing). */}
       <button
