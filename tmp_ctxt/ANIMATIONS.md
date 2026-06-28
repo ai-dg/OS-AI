@@ -10,10 +10,9 @@ All durations in milliseconds. All easings in CSS cubic-bezier or keyword form.
   for live examples (`BulletsWidget` stagger, `ProgressBarWidget` fill).
 - **Tailwind v4** utility classes handle hover/colour transitions and static styling. Use inline
   `style={{…}}` only for dynamic values (computed width %, data-driven colours).
-- **Camera transforms** (pan, zoom, pan-zoom) are **CSS transitions** on the canvas wrapper div —
+- **Camera transforms** (pan, zoom, pan-zoom) are CSS transitions on the canvas wrapper div —
   NOT Framer Motion. They use `transition: transform 400ms ease-in-out` and are driven by
-  `cameraOffsetX`, `cameraOffsetY`, `cameraZoomScale` from `canvasStore`. Toggle the `ai-camera`
-  CSS class to enable the transition only during AI-driven moves (user drag/scroll is always instant).
+  `cameraOffsetX`, `cameraOffsetY`, `cameraZoomScale` from `canvasStore`.
 - The values in this spec are the **targets**; match them whether you reach for Framer Motion or
   a Tailwind/CSS transition.
 
@@ -40,7 +39,18 @@ Never use `linear`. Never exceed 500ms for interactive feedback.
 ## Camera System
 
 The camera transform is applied to a single `.canvas-wrapper` div. All camera moves —
-pan, zoom, pan-zoom — animate this one CSS property.
+pan, zoom, pan-zoom — animate this one CSS property. The canvas wrapper must always have
+`transition: transform 400ms ease-in-out` set.
+
+```css
+.canvas-wrapper {
+  transition: transform 400ms ease-in-out;
+  transform-origin: 0 0;   /* top-left, NOT center */
+  will-change: transform;
+}
+```
+
+The transform is computed from three store values:
 
 ```ts
 // Applied in Canvas.tsx
@@ -52,26 +62,6 @@ const transform = [
 ].join(' ')
 ```
 
-```css
-/* Canvas.tsx wrapper div */
-.canvas-wrapper {
-  transform-origin: 0 0;   /* top-left — required for offset-based panning */
-  will-change: transform;
-}
-
-/* Only animate during AI-driven camera moves; user drag/scroll is always instant */
-.canvas-wrapper.ai-camera {
-  transition: transform 400ms ease-in-out;
-}
-
-.canvas-wrapper.is-ai-speaking {
-  cursor: default;   /* remove grab/pointer affordance during AI speech */
-}
-```
-
-Set `ai-camera` class when processing a `pan-zoom`, `pan`, or `fit-all` action from
-`converse.ts`/`demoStore`; remove it when the camera returns to user-navigation mode.
-
 ### Camera move timings
 
 | Event | Duration | Easing | Notes |
@@ -82,13 +72,33 @@ Set `ai-camera` class when processing a `pan-zoom`, `pan`, or `fit-all` action f
 | `zoom` (focus on widget) | 400ms | ease-in-out | existing behaviour |
 | User drag pan | 0ms (instant) | — | direct store mutation, no transition |
 | User scroll zoom | 0ms (instant) | — | direct store mutation, no transition |
+| `zoom-out` (restore from zoom) | 400ms | ease-in-out | existing |
 
-Non-target widget dimming (opacity 0.2) does **NOT** apply to `pan-zoom` or `pan` — only to
-`zoom` (single-widget focus).
+**User navigation is always instant** — no animation for drag/scroll. This is intentional:
+animated panning during user drag feels laggy. The CSS transition is only active during
+AI-driven camera moves. Toggle it with a class:
+
+```css
+.canvas-wrapper.ai-camera { transition: transform 400ms ease-in-out; }
+.canvas-wrapper              { transition: none; }
+```
+
+Set `ai-camera` class when processing a camera action from `converse.ts`/`demoStore`;
+remove it immediately after the transition ends.
+
+### Non-target widget opacity during zoom (existing behaviour, unchanged)
+
+| Event | Property | Value | Duration | Easing |
+|---|---|---|---|---|
+| Zoom in | non-targets opacity | 1 → 0.2 | 400ms | ease-in-out |
+| Zoom out | all widgets opacity | 0.2 → 1 | 400ms | ease-in-out |
+
+Non-target dimming does NOT apply to `pan-zoom` or `pan` — all widgets stay at full
+opacity during district transitions. Dimming is only for `zoom` (focus on single widget).
 
 ---
 
-## Zoom System
+## Zoom System (existing, unchanged)
 
 | Event | Property | Value | Duration | Easing |
 |---|---|---|---|---|
@@ -98,17 +108,23 @@ Non-target widget dimming (opacity 0.2) does **NOT** apply to `pan-zoom` or `pan
 | Zoom out (all widgets) | opacity | 0.2 → 1 | 400ms | ease-in-out |
 | Spotlight overlay | opacity | 0 → 1 | 300ms | ease-out |
 
-Zoom is applied via `transform` on the **canvas wrapper**, not individual widgets.
-See Camera System above for the full wrapper CSS (including `transform-origin: 0 0`):
+---
+
+## Camera Lock Visual (isAISpeaking)
+
+When `isAISpeaking === true`, the canvas cursor changes:
+
 ```css
-.canvas-wrapper.ai-camera {
-  transition: transform 400ms ease-in-out;
+.canvas-wrapper.is-ai-speaking {
+  cursor: default;   /* remove grab/pointer affordance */
 }
 ```
 
+No other lock indicator is shown. The AI is visibly speaking — no additional UI needed.
+
 ---
 
-## Project Switch Sequence
+## Project Switch Sequence (unchanged)
 
 | Time | Event | Duration |
 |---|---|---|
@@ -136,14 +152,12 @@ Scan-line CSS:
 
 ---
 
-## Reset Demo Flash
+## Reset Demo Flash (unchanged)
 
-On `Reset Demo` click, a brief white edge flash confirms the reset:
 ```css
 .canvas-border-flash {
   position: absolute; inset: 0;
   border: 1px solid rgba(255,255,255,0.4);
-  border-radius: 0;
   pointer-events: none;
   animation: border-flash 200ms ease-out forwards;
 }
@@ -152,157 +166,96 @@ On `Reset Demo` click, a brief white edge flash confirms the reset:
   100% { opacity: 0; }
 }
 ```
-Add this element on reset click, remove after animation completes.
 
 ---
 
-## QCM Widget Animations
+## QCM Widget Animations (unchanged)
 
 | Event | Property | Value | Duration |
 |---|---|---|---|
 | Option hover | border color | → `rgba(255,255,255,0.15)` | 150ms |
 | Option select | bg + border | → purple tint | 200ms ease-out |
-| Correct answer reveal | bg + border | → green `rgba(52,211,153,0.15)` / `#34d399` | 300ms ease-out |
-| Wrong answer reveal | bg + border | → red `rgba(239,68,68,0.15)` / `#ef4444` | 300ms ease-out |
-| Correct reveal (if wrong chosen) | both answer rows animate | — | 300ms, +100ms stagger |
+| Correct answer reveal | bg + border | → green | 300ms ease-out |
+| Wrong answer reveal | bg + border | → red | 300ms ease-out |
 | Progress bar fill (on enter) | width | 0 → value% | 800ms ease-out |
 | Submit button appear | opacity + translateY | 0,+8px → 1,0 | 300ms ease-out |
-| Question transition (Next/Prev) | translateX | +20px → 0 (in), 0 → -20px (out) | 200ms ease-in-out |
+| Question transition | translateX | +20px → 0 (in) | 200ms ease-in-out |
 
 ---
 
-## Mail Compose Widget Animations
+## Mail Compose Widget Animations (unchanged)
 
 | Event | Property | Value | Duration |
 |---|---|---|---|
 | Send button click | button text | → `Sending…` + spinner | immediate |
 | Spinner | transform | rotate 360° | 800ms linear infinite |
-| Send success | button | → `✓` green, opacity 1 | 200ms ease-out |
+| Send success | button | → `✓` green | 200ms ease-out |
 | Widget sent collapse | transform + opacity | scale(0.85) + opacity 0 | 600ms ease-in |
-| QCM attachment card shrink | width + transform | → 30% original, slide left | 400ms ease-in-out |
-
-QCM → attachment card transition (Step 3a):
-```css
-/* QCM widget transitions from full size to mini attachment card */
-.qcm-widget.shrinking {
-  transition: all 400ms ease-in-out;
-  transform: scale(0.3) translateX(-60%);
-  opacity: 0.7;
-  border: 1px solid rgba(99,102,241,0.4);
-}
-```
-After transition, swap the widget for a small `attachment-card` div inside the mail-compose widget.
 
 ---
 
-## Lesson Widget Animations (SVG Drawing)
+## Lesson Widget Animations (unchanged)
 
 ### Triangle draw (Beat 0)
 ```
-Each of the 3 sides draws itself via stroke-dashoffset:
-  stroke-dasharray: {segmentLength}
-  stroke-dashoffset: {segmentLength} → 0
-  duration: animationMs / 3 per segment (sequential, not parallel)
-  easing: ease-out
+stroke-dashoffset animation per segment: animationMs / 3 per segment, ease-out
 After each segment: vertex dot fades in (100ms)
-After all 3: right-angle marker square draws (150ms)
+After all 3: right-angle marker draws (150ms)
 ```
 
 ### Side highlight (Beats 1–3)
 ```
-Previous highlight fades out (if any): stroke returns to default white (200ms)
-Targeted segment: stroke changes to glowColor (200ms ease-out)
-SVG filter glow: duplicate path behind with blur(3px) same color, opacity 0→0.6 (300ms)
-Label fade in: opacity 0→1 + translateX(-4px → 0) (300ms ease-out, 100ms after stroke change)
+Previous highlight fades out (200ms)
+Targeted segment: stroke → glowColor (200ms ease-out)
+SVG glow filter: blur(3px) duplicate, opacity 0→0.6 (300ms)
+Label fade in: opacity 0→1 + translateX(-4px→0) (300ms ease-out)
 ```
 
 ### Equation reveal (Beat 4)
 ```
-Triangle: opacity 1→0.4 (400ms ease-out) — steps back to give equation space
-Equation container: fade in (300ms ease-out)
-Each character types in with 60ms delay between chars
-After last char: 400ms pause
-Connector lines draw via stroke-dashoffset (400ms ease-out, 100ms stagger per connector)
-Connectors: dashed line, rgba(255,255,255,0.25), from equation char to triangle label
-```
-
-### "OK?" prompt
-```
-Appears after instruction text completes (200ms delay)
-Pulse animation: opacity 0.5 ↔ 1.0, 1500ms ease-in-out, infinite
-On click/confirm: opacity 0 (150ms), then next beat starts
+Triangle: opacity 1→0.4 (400ms ease-out)
+Equation: each character types in, 60ms delay per char
+Connector lines: stroke-dashoffset (400ms ease-out, 100ms stagger)
 ```
 
 ---
 
-## Ticker
+## Ticker (unchanged)
 
 | Event | Property | Value | Duration | Easing |
 |---|---|---|---|---|
 | New sentence in | opacity | 0 → 1 | 150ms | ease-out |
 | Character typewriter | — | 25ms per character | — | — |
 | Sentence clear | opacity | 1 → 0 | 400ms | ease-in |
-| Between sentences | pause | 1500ms hold | — | — |
 
 ---
 
-## Mic Indicator
+## Mic Indicator (unchanged)
 
 | State | Animation |
 |---|---|
-| Idle | `scale(1.0) → scale(1.15)` breathing, 2000ms cycle, ease-in-out, infinite |
-| Listening (active) | faster breathing: 800ms cycle, slightly brighter border |
-| Processing | stop breathing, rotate border (spinner), 1000ms linear infinite |
+| Idle | `scale(1.0) → scale(1.15)` breathing, 2000ms cycle |
+| Listening | faster breathing: 800ms cycle |
+| Processing | rotate border spinner, 1000ms linear infinite |
 | Error | border turns `rgba(239,68,68,0.8)`, 200ms |
 
 ---
 
-## Conversation Tree
+## Conversation Tree (unchanged)
 
 | Event | Property | Value | Duration |
 |---|---|---|---|
 | New node appears | opacity | 0 → 1 | 200ms |
 | New connecting line | stroke-dashoffset | 100% → 0 | 300ms |
 | Node selected | scale | 1 → 1.2 | 150ms |
-| Node glow (active) | filter | 0 → `drop-shadow(0 0 4px rgba(255,255,255,0.5))` | 200ms |
-| Canvas restore on click | all widgets | simultaneous fade swap | 250ms out + 300ms in |
+| Canvas restore on click | all widgets | fade swap | 250ms out + 300ms in |
 
 ---
 
-## Arrow Widgets
-
-| Event | Duration |
-|---|---|
-| Draw on spawn | stroke-dashoffset 100%→0, 400ms ease-out |
-| Undraw on despawn | stroke-dashoffset 0→100%, 200ms ease-in |
-
----
-
-## Canvas Background
-
-The shipped background is a **static CSS dot grid** — `.canvas-bg` in `index.css`
-(`radial-gradient` 1px dots at 3% white, 32px grid). Cheap, always-on, no JS. Keep this as the
-default.
-
-Optional enhancement — animated particles (only if it stays at 60fps):
-```js
-// Drive via requestAnimationFrame — never setInterval.
-// ~40 particles, 3px circle, opacity 0.015–0.03, random position
-// Velocity: random direction, speed 0.02–0.06 px/frame; wrap on out-of-bounds
-// Pure white rgba(255,255,255,opacity); no acceleration, no colour
-// Performance guard: skip update if document.hidden === true
-```
-
----
-
-## Design tokens
-
-These are the canonical values. In code they are expressed as **Tailwind utilities** (the zinc
-palette + `font-mono`) and inline `style` for the accent colours — not a `:root` block (the only
-global CSS is `@import "tailwindcss"` + `.canvas-bg` in `index.css`). Reference values:
+## Design Tokens (unchanged)
 
 ```css
-/* conceptual tokens — apply via Tailwind classes / inline style, not a literal :root */
+/* conceptual tokens — apply via Tailwind classes / inline style */
 :root {
   --canvas-bg: #080808;
   --widget-bg: rgba(255, 255, 255, 0.05);
@@ -319,8 +272,8 @@ global CSS is `@import "tailwindcss"` + `.canvas-bg` in `index.css`). Reference 
   --transition-fast: 200ms ease-in;
   --transition-base: 300ms ease-out;
   --transition-zoom: 400ms ease-in-out;
-  --transition-camera: 400ms ease-in-out;   /* pan / pan-zoom AI-driven moves */
-  --transition-fit-all: 500ms ease-in-out;  /* fit-all overview — slightly slower */
+  --transition-camera: 400ms ease-in-out;   /* NEW — pan/pan-zoom */
+  --transition-fit-all: 500ms ease-in-out;  /* NEW — fit-all overview */
   --transition-label: 600ms ease-out;
   --transition-lesson: 700ms ease-out;
 }

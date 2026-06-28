@@ -1,30 +1,32 @@
-interface Rect { x: number; y: number; w: number; h: number }
+import type { Widget } from "@/widgets/types";
 
-const REGISTRY = new Map<string, Rect>();
+// Named canvas regions in 300×300-unit virtual space
+export const REGIONS: Record<string, { x: number; y: number; w: number; h: number }> = {
+  origin:         { x: 5,   y: 5,   w: 90, h: 69 },
+  right:          { x: 110, y: 5,   w: 90, h: 69 },
+  "far-right":    { x: 215, y: 5,   w: 80, h: 69 },
+  below:          { x: 5,   y: 85,  w: 90, h: 69 },
+  "below-right":  { x: 110, y: 85,  w: 90, h: 69 },
+  "far-below":    { x: 5,   y: 170, w: 90, h: 69 },
+};
 
-// 90px: chatbox (48px) + 8px gap + response box (34px) above the chatbox bottom.
-const RESERVED_BOTTOM_PX = 90;
-
-function getCanvasHeight(): number {
-  const el = document.querySelector<HTMLElement>(".canvas-bg");
-  return el ? el.offsetHeight : window.innerHeight;
+/** Resolve a named region to its top-left origin. Falls back to `origin`. */
+export function resolveRegion(region: string): { x: number; y: number } {
+  const r = REGIONS[region] ?? REGIONS.origin;
+  return { x: r.x, y: r.y };
 }
 
-function recomputeBottomZone(): void {
-  const ch = getCanvasHeight();
-  const h = (RESERVED_BOTTOM_PX / ch) * 100;
-  REGISTRY.set("reserved-bottom-zone", { x: 0, y: 100 - h, w: 100, h });
-}
-
-if (typeof window !== "undefined") {
-  recomputeBottomZone();
-  window.addEventListener("resize", recomputeBottomZone);
+/** Minimum zoom scale to fit all spawned widgets in the viewport. */
+export function computeMinZoom(widgets: Widget[]): number {
+  if (widgets.length === 0) return 0.5;
+  const maxX = Math.max(...widgets.map((w) => w.x + w.w)) + 10;
+  const maxY = Math.max(...widgets.map((w) => w.y + w.h)) + 10;
+  return Math.max(0.1, Math.min(100 / maxX, 74 / maxY) * 0.9);
 }
 
 /**
- * Clamps a widget bounding box so it does not intrude into any registered
- * blocked region. If the widget's bottom exceeds the safe zone, its height
- * is reduced to fit. The minimum clamped height is 5%.
+ * Clamp a widget bounding box to the 300-unit virtual canvas.
+ * Minimum size: 5 units. Maximum: 120 wide × 90 tall.
  */
 export function clampToSafeZone(rect: {
   x: number;
@@ -32,13 +34,12 @@ export function clampToSafeZone(rect: {
   w: number;
   h: number;
 }): { x: number; y: number; w: number; h: number } {
-  const zone = REGISTRY.get("reserved-bottom-zone");
-  if (!zone) return rect;
-
-  const widgetBottom = rect.y + rect.h;
-  if (widgetBottom > zone.y) {
-    return { ...rect, h: Math.max(5, zone.y - rect.y) };
-  }
-
-  return rect;
+  const cw = Math.min(Math.max(rect.w, 5), 120);
+  const ch = Math.min(Math.max(rect.h, 5), 90);
+  return {
+    x: Math.min(Math.max(rect.x, 0), 290 - cw),
+    y: Math.min(Math.max(rect.y, 0), 290 - ch),
+    w: cw,
+    h: ch,
+  };
 }

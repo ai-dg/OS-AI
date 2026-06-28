@@ -99,6 +99,7 @@ function taskWidgetData(project: Project) {
 /** show-todo — three task-list cards. */
 function spawnOverview() {
   canvas().clear();
+  useCanvasStore.setState({ isAISpeaking: true });
   narrate("Good morning, Alex. Here's where you're at today.");
   const { projects } = store();
   const layout = [
@@ -112,11 +113,13 @@ function spawnOverview() {
       canvas().spawn({ id: c.id, type: "task-list", x: c.x, y: 18, w: 26, h: 42, data: taskWidgetData(c.proj) });
     }, i * 80);
   });
+  window.setTimeout(() => useCanvasStore.setState({ isAISpeaking: false }), 600);
 }
 
 /** open-homework (qcm) — resumes from saved answers. Completes on submit. */
 function spawnQcm(projectId: string, hw: Homework) {
   store().setActiveProject(projectId); // clears canvas, sets the project label
+  useCanvasStore.setState({ isAISpeaking: true });
   const d = hw.data as QCMData;
   narrate("Picking up where you left off. Question 4 of 7.");
   canvas().spawn({
@@ -134,11 +137,13 @@ function spawnQcm(projectId: string, hw: Homework) {
       questions: d.questions,
     },
   });
+  window.setTimeout(() => useCanvasStore.setState({ isAISpeaking: false }), 400);
 }
 
 /** open-homework (lesson) — opens the intro dialog; the lesson widget owns its beats. */
 function spawnLessonDialog(projectId: string) {
   store().setActiveProject(projectId); // clears canvas, sets the project label
+  useCanvasStore.setState({ isAISpeaking: true });
   narrate("Starting Pythagoras Theorem. Want a quick visual walkthrough first?");
   canvas().spawn({
     id: "maths-dialog",
@@ -157,10 +162,12 @@ function spawnLessonDialog(projectId: string) {
       ],
     },
   });
+  window.setTimeout(() => useCanvasStore.setState({ isAISpeaking: false }), 400);
 }
 
 /** compose-mail — pre-filled submission to the project's teacher. Completes on send. */
 function spawnMail(projectId: string) {
+  useCanvasStore.setState({ isAISpeaking: true });
   canvas().despawn("qcm-ww2");
   const teacher = store().projects[projectId]?.teacher ?? store().projects.history?.teacher;
   narrate(`Preparing your submission for ${teacher?.name ?? "your teacher"}. Ready to send — shall I go ahead?`);
@@ -183,6 +190,7 @@ function spawnMail(projectId: string) {
       readyToSend: true,
     },
   });
+  window.setTimeout(() => useCanvasStore.setState({ isAISpeaking: false }), 400);
 }
 
 // ─── Lesson helpers (concept library) ─────────────────────────────────────────
@@ -504,6 +512,8 @@ export const useDemoStore = create<DemoState>((set, get) => ({
   reset: () => {
     useProjectStore.getState().reset(); // fresh school data + clears canvas/tree
     canvas().clear();
+    // Ensure camera is fully reset to origin with no lock.
+    useCanvasStore.setState({ isAISpeaking: false, cameraOffsetX: 0, cameraOffsetY: 0, cameraZoomScale: 1 });
     narrate("");
     set({
       completed: new Set<string>(),

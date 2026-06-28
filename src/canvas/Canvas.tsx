@@ -1,3 +1,4 @@
+import { useRef, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useCanvasStore } from "@/store/canvasStore";
 import { WIDGETS } from "@/widgets/registry";
@@ -286,28 +287,145 @@ export function Canvas({ onSubmit, isThinking, chatBusy, voiceLevelRef }: Canvas
   const cameraMode     = useCanvasStore((s) => s.cameraMode);
   const cameraTargetId = useCanvasStore((s) => s.cameraTargetId);
   const cameraZoomScale= useCanvasStore((s) => s.cameraZoomScale);
+  const cameraOffsetX  = useCanvasStore((s) => s.cameraOffsetX);
+  const cameraOffsetY  = useCanvasStore((s) => s.cameraOffsetY);
+  const isAISpeaking   = useCanvasStore((s) => s.isAISpeaking);
   const zoomCamera     = useCanvasStore((s) => s.zoomCamera);
   const resetCamera    = useCanvasStore((s) => s.resetCamera);
 
-  // Resolve the target widget (may be null if despawned mid-mode)
+  // Spotlight / zoom: resolve target widget (may be null if despawned)
   const target = cameraTargetId ? (widgets[cameraTargetId] ?? null) : null;
+  // The 100-unit horizontal band of the zoom target (0 = origin, 1 = right, 2 = far-right, …).
+  // Only widgets in the same band get dimmed — off-screen districts stay at full opacity.
+  const targetBand = target ? Math.floor(target.x / 100) : -1;
 
-  // Widget centre as 0-1 fractions of canvas
-  const cx = target ? (target.x + target.w / 2) / 100 : 0.5;
-  const cy = target ? (target.y + target.h / 2) / 100 : 0.5;
+  // Spatial camera CSS transform. translate(-offsetX*S%, -offsetY*S%) scale(S)
+  // with transform-origin: 0 0 brings canvas unit offsetX to the screen left edge.
+  const S = cameraZoomScale;
+  const transform = `translate(${-cameraOffsetX * S}%, ${-cameraOffsetY * S}%) scale(${S})`;
 
-  // Camera translate — pixel values so Framer Motion can interpolate correctly
-  const isZoomed = cameraMode === "zoom" && !!target;
-  const camX     = isZoomed ? window.innerWidth  * cameraZoomScale * (0.5 - cx) : 0;
-  const camY     = isZoomed ? window.innerHeight * cameraZoomScale * (0.5 - cy) : 0;
-  const camS     = isZoomed ? cameraZoomScale : 1;
+  // Ref synced to isAISpeaking for use inside stable event handlers.
+  const isAISpeakingRef = useRef(false);
+  useEffect(() => {
+    isAISpeakingRef.current = isAISpeaking;
+  }, [isAISpeaking]);
+
+  // Viewport div ref — drag/scroll events attach here.
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const dragState = useRef<{
+    startX: number; startY: number; startOffX: number; startOffY: number;
+    capturing: boolean;
+  } | null>(null);
+
+  // User navigation: drag to pan, scroll to zoom (blocked while AI is speaking).
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (isAISpeakingRef.current) return;
+      e.preventDefault();
+      const { cameraZoomScale: cs, cameraOffsetX: ox, cameraOffsetY: oy, minZoomScale } =
+        useCanvasStore.getState();
+      const delta = -e.deltaY * 0.001;
+      const nextS = Math.min(Math.max(cs + delta, minZoomScale), 2.5);
+      const rect = el.getBoundingClientRect();
+      const mxPct = ((e.clientX - rect.left) / rect.width) * 100;
+      const myPct = ((e.clientY - rect.top) / rect.height) * 100;
+      const canvasX = ox + mxPct / cs;
+      const canvasY = oy + myPct / cs;
+      // Scrolling exits zoom mode so dimmed widgets return to full opacity.
+      useCanvasStore.setState({
+        cameraZoomScale: nextS,
+        cameraOffsetX: Math.max(0, canvasX - mxPct / nextS),
+        cameraOffsetY: Math.max(0, canvasY - myPct / nextS),
+        cameraMode: "idle",
+        cameraTargetId: null,
+      });
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (isAISpeakingRef.current || e.button !== 0) return;
+      const { cameraOffsetX: ox, cameraOffsetY: oy } = useCanvasStore.getState();
+      // Don't capture yet — wait for movement threshold so widget onClick still fires.
+      dragState.current = { startX: e.clientX, startY: e.clientY, startOffX: ox, startOffY: oy, capturing: false };
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (!dragState.current || isAISpeakingRef.current) return;
+      const dxPx = e.clientX - dragState.current.startX;
+      const dyPx = e.clientY - dragState.current.startY;
+      // Capture the pointer only after a meaningful drag (≥5px total), so a quick
+      // tap doesn't eat the widget's onClick handler via pointer capture.
+      if (!dragState.current.capturing) {
+        if (Math.abs(dxPx) + Math.abs(dyPx) < 5) return;
+        el.setPointerCapture(e.pointerId);
+        dragState.current.capturing = true;
+        el.style.cursor = "grabbing";
+      }
+      const { cameraZoomScale: cs } = useCanvasStore.getState();
+      const rect = el.getBoundingClientRect();
+      const dx = (dxPx / rect.width) * 100 / cs;
+      const dy = (dyPx / rect.height) * 100 / cs;
+      // Dragging exits zoom mode so dimmed widgets return to full opacity.
+      useCanvasStore.setState({
+        cameraOffsetX: dragState.current.startOffX - dx,
+        cameraOffsetY: dragState.current.startOffY - dy,
+        cameraMode: "idle",
+        cameraTargetId: null,
+      });
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (!dragState.current) return;
+      if (dragState.current.capturing) el.releasePointerCapture(e.pointerId);
+      dragState.current = null;
+      el.style.cursor = isAISpeakingRef.current ? "default" : "grab";
+    };
+
+    el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener("pointerdown", onPointerDown);
+    el.addEventListener("pointermove", onPointerMove);
+    el.addEventListener("pointerup", onPointerUp);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("pointermove", onPointerMove);
+      el.removeEventListener("pointerup", onPointerUp);
+    };
+  }, []); // stable — reads store via getState() and isAISpeakingRef
+
+  // Keyboard: Cmd/Ctrl+0 fit-all, Cmd+= zoom in, Cmd+- zoom out.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const { cameraZoomScale: cs, minZoomScale } = useCanvasStore.getState();
+      switch (e.code) {
+        case "Digit0":
+          e.preventDefault();
+          useCanvasStore.getState().fitAll();
+          break;
+        case "Equal":
+          e.preventDefault();
+          useCanvasStore.setState({ cameraZoomScale: Math.min(cs + 0.1, 2.5) });
+          break;
+        case "Minus":
+          e.preventDefault();
+          useCanvasStore.setState({ cameraZoomScale: Math.max(cs - 0.1, minZoomScale) });
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const CAMERA_TRANSITION = { duration: 0.4, ease: "easeInOut" } as const;
 
   return (
     <div
+      ref={viewportRef}
       className="canvas-bg relative overflow-hidden"
-      style={{ width: "100vw", height: "100vh" }}
+      style={{ width: "100vw", height: "100vh", cursor: isAISpeaking ? "default" : "grab" }}
     >
       {/* ── Default / idle page — JARVIS orb when the canvas is empty ───────── */}
       <AnimatePresence>
@@ -320,8 +438,6 @@ export function Canvas({ onSubmit, isThinking, chatBusy, voiceLevelRef }: Canvas
             exit={{ opacity: 0 }}
             transition={{ duration: 0.6, ease: "easeOut" }}
           >
-            {/* Hint sits ABOVE the orb. While the AI is answering it becomes a
-                cancel affordance (Ctrl+C) instead of the idle "hold to speak". */}
             <p
               className={`select-none font-mono text-[11px] tracking-[0.35em] transition-colors duration-300 ${
                 isThinking ? "text-amber-300/70" : "text-teal-300/40"
@@ -340,11 +456,16 @@ export function Canvas({ onSubmit, isThinking, chatBusy, voiceLevelRef }: Canvas
       </AnimatePresence>
 
       {/* ── Camera transform layer ─────────────────────────────────────────── */}
-      <motion.div
-        className="absolute inset-0"
-        style={{ willChange: "transform" }}
-        animate={{ x: camX, y: camY, scale: camS }}
-        transition={CAMERA_TRANSITION}
+      {/* CSS transition only when AI is speaking — instant during user navigation. */}
+      <div
+        className={isAISpeaking ? "ai-camera" : ""}
+        style={{
+          position: "absolute",
+          inset: 0,
+          transform,
+          transformOrigin: "0 0",
+          willChange: "transform",
+        }}
       >
         <ConnectingArrows widgets={widgets} order={order} />
 
@@ -357,9 +478,13 @@ export function Canvas({ onSubmit, isThinking, chatBusy, voiceLevelRef }: Canvas
             const Render = WIDGETS[w.type];
             const { outerCls, innerCls, outerStyle } = shellConfig(w.type);
 
-            // In zoom mode, all widgets except the target dim to 0.2.
+            // In zoom mode, dim only widgets in the same 100-unit horizontal band
+            // as the target. Off-screen districts (origin while zooming in right, etc.)
+            // stay at full opacity — the camera has already moved away from them.
+            const widgetBand = Math.floor(w.x / 100);
             const effectiveOpacity =
               cameraMode === "zoom" && cameraTargetId && id !== cameraTargetId
+                && widgetBand === targetBand
                 ? 0.2
                 : w.opacity;
 
@@ -399,7 +524,7 @@ export function Canvas({ onSubmit, isThinking, chatBusy, voiceLevelRef }: Canvas
             );
           })}
         </AnimatePresence>
-      </motion.div>
+      </div>
 
       {/* ── Spotlight vignette — screen space, outside camera transform ────── */}
       <AnimatePresence>

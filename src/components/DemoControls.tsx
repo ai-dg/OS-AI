@@ -15,12 +15,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useDemoStore, TOTAL_STEPS } from "@/store/demoStore";
+import { useCanvasStore } from "@/store/canvasStore";
 
 export function DemoControls() {
   const completedCount = useDemoStore((s) => s.completed.size);
   const guidedLabel = useDemoStore((s) => s.guidedLabel);
   const advanceGuided = useDemoStore((s) => s.advanceGuided);
   const reset = useDemoStore((s) => s.reset);
+  const minZoomScale = useCanvasStore((s) => s.minZoomScale);
+  const showFit = minZoomScale < 0.9;
 
   const [flash, setFlash] = useState(false);
   const [voiceReady, setVoiceReady] = useState(false);
@@ -78,6 +81,18 @@ export function DemoControls() {
       >
         ↺ Reset Demo
       </button>
+
+      {/* Fit-all button — shown when content extends beyond the initial viewport. */}
+      {showFit && (
+        <button
+          type="button"
+          onClick={() => useCanvasStore.getState().fitAll()}
+          title="Fit all content in view (Cmd+0)"
+          className="fixed right-36 top-4 z-[200] select-none border border-white/10 bg-white/5 px-2 py-1.5 font-mono text-[11px] text-zinc-400 transition-colors duration-200 hover:bg-white/10 hover:text-zinc-200"
+        >
+          ⊡
+        </button>
+      )}
 
       {/* Step counter — under the Reset button. */}
       <span className="fixed right-4 top-14 z-[200] select-none font-mono text-[10px] text-zinc-600">

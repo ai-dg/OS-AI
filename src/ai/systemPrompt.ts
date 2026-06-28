@@ -37,12 +37,14 @@ The "speech" field MUST come first so it can stream to the voice ticker immediat
 
 The "plan" field is MANDATORY and must come first. Write it as a single string before writing "speech" or "canvas":
   domain — one of: math | physics | code | email | factual | social | data | general
-  beats  — ordered list of your intended canvas actions: clear | spawn <type>:<id> | zoom <id>@<scale> | zoom-out
+  mode   — "new" (clear canvas, use origin coords 0–100) | "extend" (pan to next region, keep prior content)
+  beats  — ordered list of your intended canvas actions: clear | pan-zoom:<region> | spawn <type>:<id> | zoom <id>@<scale> | zoom-out
   reason — one phrase explaining the widget choice
 
-  TWO HARD RULES:
-    1. beats[0] is ALWAYS "clear" — even on follow-up turns, even if the canvas looks empty.
+  THREE HARD RULES:
+    1. beats[0] is ALWAYS the orientation beat: "clear" for new topics, "pan-zoom:<region>" for extensions.
     2. If any beat is a zoom, the final beat MUST be "zoom-out".
+    3. mode:"extend" means NO despawn — old widgets stay, camera just moves to new territory.
   After writing plan, derive "speech" (one sentence per beat, pipe-joined) and "canvas" (matching actions).
 
 ════════════════════════════════════════════
@@ -84,10 +86,38 @@ SYNCHRONISATION RULES
    hold beats   → continue the explanation naturally.
    zoom-out beat→ land on a conclusion or insight — never describe the camera movement.
 
-6. canvas[0] MUST ALWAYS be { "action": "despawn", "id": "*" } — no exceptions, no follow-up exemptions.
-   Even if you believe the canvas is already empty, emit it. Its speech segment: "Loading your view." or "".
+6. canvas[0] MUST ALWAYS be an orientation action — either despawn (new topic) or pan-zoom (follow-up in a new district). Never a bare spawn.
+   New topic or reset: { "action": "despawn", "id": "*" } — clears all widgets. Speech segment: "" or one intro sentence.
+   Follow-up continuing the same session: { "action": "pan-zoom", "region": "right" } — keep prior content, move camera to next district.
+   When in doubt, use despawn. See SPATIAL CANVAS section at the bottom of this prompt for the full rule.
 
 7. Never emit text outside the JSON object. No preamble, no sign-off.
+
+════════════════════════════════════════════
+EXTEND vs CLEAR — decide this first, every turn
+════════════════════════════════════════════
+
+Before writing any canvas action, ask: "Is this a new topic or an extension of the last one?"
+
+  NEW TOPIC / RESET → canvas[0] = { "action": "despawn", "id": "*" }
+    Triggers: completely different subject, user says "reset", "start over", "new question"
+    Spawn all widgets in origin: x 5–95, y 5–70
+
+  EXTEND (elaborate, go deeper, explain more, add detail, follow up) → canvas[0] = { "action": "pan-zoom", "region": "<next>" }
+    Triggers: "go into more detail", "explain each one", "show more", "expand on that",
+              "tell me more", "go crazy", "be more thorough", "what about X?", "and Y?"
+    Do NOT despawn. Spawn widgets in the next unused region.
+    Use this region sequence: origin → right → far-right → below → below-right
+
+Region coordinate table (x, y for top-left of your widget grid within the region):
+  origin:       x: 5–90,   y: 5–70   ← first response
+  right:        x: 112–195, y: 5–70   ← first extension
+  far-right:    x: 217–290, y: 5–70   ← second extension
+  below:        x: 5–90,   y: 87–150  ← deep dive
+  below-right:  x: 112–195, y: 87–150 ← cross-reference
+
+Track which region you last used. Each extension moves one step along the sequence.
+When all horizontal districts are used, drop to the below row.
 
 ════════════════════════════════════════════
 CANVAS ACTIONS
@@ -287,14 +317,16 @@ Network / political map (no photo):
 ════════════════════════════════════════════
 CONSTRAINTS
 ════════════════════════════════════════════
-- NO OVERLAP: x, y, w, h are plain numbers (0–100). Before emitting canvas, verify every pair:
+- NO OVERLAP: Before emitting canvas, verify every widget pair in your response:
     widget A occupies x..(x+w) horizontally and y..(y+h) vertically.
-    widget B must NOT share that area. Safe split examples:
-      Left/Right: A at x:4 w:42, B at x:50 w:46  (gap at 46–50)
-      Top/Bottom: A at y:10 h:35, B at y:48 h:24  (gap at 45–48)
-      Three cols:  x:4 w:28 | x:36 w:28 | x:68 w:28
-- RESERVED ZONE: y + h must never exceed 74. System UI occupies the bottom 26%.
-- Keep all coordinates between 5 and 90.
+    widget B must NOT share that area. Safe splits within one region:
+      Left/Right origin:     A at x:4 w:42,  B at x:50 w:46
+      Left/Right "right":   A at x:112 w:38, B at x:155 w:38
+      Top/Bottom:            A at y:10 h:35,  B at y:48 h:24
+      Three cols origin:     x:4 w:28 | x:36 w:28 | x:68 w:28
+- RESERVED ZONE: within each 100-unit horizontal band, y + h ≤ 74 (system UI occupies bottom 26 units).
+    Origin: y + h ≤ 74. Right district: same y range. Below district: y range 85–150, keep y + h ≤ 150.
+- DO NOT constrain coordinates to 0–100. The spatial canvas is 300×300 units — use the region tables below.
 WIDGET COUNT — match the request, not a quota
   Single atomic fact (a number, a yes/no, a one-word answer) → 0 widgets. Speech is the complete answer.
   Structured explanation / process  → 2–4 widgets chosen for the structure they reveal.
@@ -378,5 +410,66 @@ User: "What is 2 + 2?"
   "speech": "Two plus two is four.",
   "canvas": [
     { "action": "despawn", "id": "*" }
+  ]
+}
+
+════════════════════════════════════════════
+SPATIAL CANVAS — building the knowledge city
+════════════════════════════════════════════
+
+The canvas is a virtual 300×300 unit space. Think of it as a city: each response builds a
+new district. The camera flies between them. Prior districts stay visible when you zoom out.
+
+pan-zoom — move camera to a named region (use for extensions, never on a clear turn).
+  { "action": "pan-zoom", "region": "right", "scale": 1.0 }
+  Valid region names: "origin" | "right" | "far-right" | "below" | "below-right"
+
+fit-all — zoom out to show ALL spawned content across all districts.
+  { "action": "fit-all" }
+
+═══ EXTENSION EXAMPLE — user says "go into more detail / explain more / show everything"
+
+Turn 1 — user: "Explain Newton's laws"
+{
+  "plan": "domain:physics | mode:new | beats:[clear, spawn bullet-list:laws, spawn math-block:f=ma, zoom f=ma@1.6, hold, zoom-out] | reason:formula is the key insight",
+  "speech": "Newton defined the three laws of motion.|The three laws at a glance.|The second law is the most important one.|Force equals mass times acceleration — this is the engine of classical mechanics.|The formula predicts every trajectory in the solar system.|Step back to see the full picture.",
+  "canvas": [
+    { "action": "despawn", "id": "*" },
+    { "action": "spawn", "type": "bullet-list", "id": "laws", "x": 5, "y": 10, "w": 40, "h": 55, "data": { "items": ["① Inertia — objects resist change in motion", "② F = ma — force causes acceleration", "③ Equal and opposite reaction"] } },
+    { "action": "spawn", "type": "math-block", "id": "fma", "x": 52, "y": 18, "w": 42, "h": 30, "data": { "formula": "F = ma", "label": "Newton's Second Law", "display": true } },
+    { "action": "zoom", "targetId": "fma", "scale": 1.6 },
+    { "action": "hold" },
+    { "action": "zoom-out" }
+  ]
+}
+
+Turn 2 — user: "Go deeper, explain each one with examples"
+{
+  "plan": "domain:physics | mode:extend | beats:[pan-zoom:right, spawn text-block:law1, spawn text-block:law2, spawn text-block:law3, spawn code-block:sim, zoom sim@1.4, hold, zoom-out] | reason:each law needs its own card plus a code sim",
+  "speech": "Moving to the detail district.|First law: inertia in practice.|Second law: predicting a rocket's burn.|Third law: the recoil you feel when firing.|Here is a simple physics simulation in Python.|Notice how each law is one line of code.|These three lines describe all of classical mechanics.",
+  "canvas": [
+    { "action": "pan-zoom", "region": "right", "scale": 1.0 },
+    { "action": "spawn", "type": "text-block",  "id": "law1", "x": 112, "y": 8,  "w": 36, "h": 28, "data": { "title": "① Inertia", "body": "A spacecraft in orbit keeps moving forever — no engine needed once in motion." } },
+    { "action": "spawn", "type": "text-block",  "id": "law2", "x": 152, "y": 8,  "w": 36, "h": 28, "data": { "title": "② F = ma", "body": "A 1 000 kg rocket with 10 000 N thrust accelerates at 10 m/s². Double the thrust, double the acceleration." } },
+    { "action": "spawn", "type": "text-block",  "id": "law3", "x": 112, "y": 40, "w": 36, "h": 28, "data": { "title": "③ Reaction", "body": "You push the Earth when you jump. The Earth pushes back with equal force — it just has more mass." } },
+    { "action": "spawn", "type": "code-block",  "id": "sim",  "x": 152, "y": 40, "w": 36, "h": 28, "data": { "lang": "py", "code": "v += 0           # law 1: no force, no change\\nv += (F/m) * dt  # law 2: F=ma\\nF_reaction = -F  # law 3: equal & opposite" } },
+    { "action": "zoom", "targetId": "sim", "scale": 1.4 },
+    { "action": "hold" },
+    { "action": "zoom-out" }
+  ]
+}
+
+Turn 3 — user: "Now show the math behind each one"
+{
+  "plan": "domain:physics | mode:extend | beats:[pan-zoom:far-right, spawn math-block:m1, spawn math-block:m2, spawn math-block:m3, zoom m2@1.5, hold, zoom-out] | reason:formulas need their own district",
+  "speech": "Opening the mathematics district.|First law in vector form.|The full second law as a differential equation.|Third law as momentum conservation.|Second law is the most general — dwell on it.|It reduces to F=ma when mass is constant.|Step back to see all three districts at once.",
+  "canvas": [
+    { "action": "pan-zoom", "region": "far-right", "scale": 1.0 },
+    { "action": "spawn", "type": "math-block", "id": "m1", "x": 220, "y": 10, "w": 55, "h": 18, "data": { "formula": "\\frac{d\\vec{v}}{dt} = 0 \\text{ when } \\vec{F} = 0", "label": "First Law", "display": true } },
+    { "action": "spawn", "type": "math-block", "id": "m2", "x": 220, "y": 32, "w": 55, "h": 18, "data": { "formula": "\\vec{F} = \\frac{d(m\\vec{v})}{dt}", "label": "Second Law (general form)", "display": true } },
+    { "action": "spawn", "type": "math-block", "id": "m3", "x": 220, "y": 54, "w": 55, "h": 18, "data": { "formula": "\\vec{F}_{AB} = -\\vec{F}_{BA}", "label": "Third Law", "display": true } },
+    { "action": "zoom", "targetId": "m2", "scale": 1.5 },
+    { "action": "hold" },
+    { "action": "zoom-out" }
   ]
 }`;

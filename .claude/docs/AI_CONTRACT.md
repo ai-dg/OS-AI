@@ -66,6 +66,10 @@ export async function converse(
   callbacks: ConverseCallbacks,
 ): Promise<ConverseResult> {
   const context = useProjectStore.getState().getActiveContext();
+
+  // Lock camera before streaming begins
+  useCanvasStore.getState().set({ isAISpeaking: true });
+
   const result = streamText({
     model: anthropic(MODEL),
     system: buildSystemPrompt(context),
@@ -80,6 +84,13 @@ export async function converse(
   //      dict `widgets`          → dispatchDynamicCanvas() (Zod-validated)
   //      array `widgets`         → dispatchWidgetDeclarations() (legacy)
   // 4. On malformed JSON → spawn a fallback `text-block` so the canvas is never blank.
+  // 5. Always unlock camera in finally block.
+
+  try {
+    // ... streaming and sync playback ...
+  } finally {
+    useCanvasStore.getState().set({ isAISpeaking: false });
+  }
 }
 ```
 
@@ -104,12 +115,12 @@ interface ConverseCallbacks {
 
 ```json
 {
-  "speech": "Loading your view.|Here are the latest emails.|The top one is urgent.|Zooming in.",
+  "speech": "Let me move to a new view.|Here is the first concept.|And the second.|Zooming in.",
   "canvas": [
-    { "action": "despawn", "id": "*" },
-    { "action": "spawn", "type": "email-ui", "id": "email-1", "x": 8, "y": 10, "w": 48, "h": 36, "data": { "from": "…", "subject": "…", "previewText": "…", "timestamp": "9:14 AM" } },
-    { "action": "spawn", "type": "bullet-list", "id": "inbox", "x": 60, "y": 10, "w": 35, "h": 50, "data": { "items": ["…"] } },
-    { "action": "zoom",  "targetId": "email-1", "scale": 1.3 }
+    { "action": "pan-zoom", "region": "right", "scale": 1.0 },
+    { "action": "spawn", "type": "text-block", "id": "concept-1", "x": 112, "y": 10, "w": 40, "h": 30, "data": { "title": "…", "body": "…" } },
+    { "action": "spawn", "type": "text-block", "id": "concept-2", "x": 158, "y": 10, "w": 40, "h": 30, "data": { "title": "…", "body": "…" } },
+    { "action": "zoom",  "targetId": "concept-1", "scale": 1.4 }
   ]
 }
 ```
@@ -117,16 +128,24 @@ interface ConverseCallbacks {
 Synchronisation rules (enforced by the system prompt, consumed by `playSyncResponse`):
 - `speech` comes **first**; `|` marks segment boundaries. **#segments === #canvas actions.**
 - Segment *i* is spoken while `canvas[i]` paints. Keep each segment ≤ 12 words.
-- `canvas[0]` is almost always `{ "action": "despawn", "id": "*" }` (clear) with a short
-  transition segment (`"Loading your view."`).
-- `x, y, w, h` are plain-number percentages (no `%`). **`y + h ≤ 74`** (bottom 26% reserved).
+- `canvas[0]` is almost always either:
+  - `{ "action": "despawn", "id": "*" }` followed by `{ "action": "pan-zoom", "region": "origin" }` (clearing and returning home), OR
+  - `{ "action": "pan-zoom", "region": "right" }` (moving to a new district without clearing)
+- `canvas[0]` is **never** a bare `spawn` — always orient the camera first.
+- `x, y, w, h` are **canvas units** (plain numbers). See SPATIAL_CANVAS.md for the coordinate system.
+  - Within origin region (x: 0–100, y: 0–74): identical to old viewport-% system. **`y + h ≤ 74`** still applies per region.
+  - Off-screen regions start at x: 110 (right), y: 85 (below). See named regions in SPATIAL_CANVAS.md.
 
 ### Canvas actions (`SyncCanvasAction` → `canvasStore`)
-| action | fields | store call |
-|---|---|---|
-| `spawn` | `type, id, x, y, w, h, data` | `spawn({ … })` (friendly type mapped to internal `WidgetType`) |
-| `despawn` | `id` (or `"*"`) | `despawn(id)` / `clear()` |
-| `zoom` | `targetId, scale` | `zoomCamera(targetId, scale)` |
+
+| action | fields | store call | notes |
+|---|---|---|---|
+| `spawn` | `type, id, x, y, w, h, data` | `spawn({ … })` | friendly type mapped to internal `WidgetType` |
+| `despawn` | `id` (or `"*"`) | `despawn(id)` / `clear()` | |
+| `zoom` | `targetId, scale` | `zoomCamera(targetId, scale)` | existing |
+| `pan-zoom` | `region` OR `x, y`, optional `scale` | `panZoom({ … })` | **NEW** — primary camera move |
+| `pan` | `dx, dy` | `panCamera(dx, dy)` | **NEW** — relative translate |
+| `fit-all` | — | `fitAll()` | **NEW** — zoom to show all widgets |
 
 Friendly→internal type map lives in `converse.ts` (`SYNC_TYPE_MAP`) and `orchestrate.ts`
 (`TYPE_MAP`): `text-block→card`, `bullet-list→bullets`, `stat-card→stat`, `code-block→code`;
@@ -145,8 +164,8 @@ specialised types (`highlight-overlay`, `progress-bar`, `image-placeholder`, `em
   (`{ id, type, position:{top,left,width,height}, props }`). Dispatched by
   `dispatchWidgetDeclarations()`; supports a `staggerMs` for column reveals.
 
-An optional `camera` field (`{ action: "zoom"|"zoom-out"|"spotlight", target_widget_id, scale }`)
-is dispatched by `dispatchCameraAction()`.
+An optional `camera` field (`{ action: "zoom"|"zoom-out"|"spotlight"|"pan-zoom"|"fit-all", … }`)
+is dispatched by `dispatchCameraAction()`. Now also handles `pan-zoom` and `fit-all`.
 
 ---
 
@@ -169,6 +188,38 @@ Demo-relevant guidance to keep in the prompt:
   confirm before the Gmail MCP send.
 - QCM: never reveal correct answers before the student submits.
 - Lesson: narrate one beat at a time; wait for confirmation before the next beat.
+
+### Spatial canvas guidance (add to system prompt after widget catalog)
+
+```
+## SPATIAL CANVAS
+
+The canvas is a virtual 300×300 unit space. The initial viewport shows x: 0–100, y: 0–74.
+You can place widgets beyond x: 100 or y: 74 to create new off-screen districts.
+The camera will pan-zoom to reveal them as part of your narrative.
+
+### Named regions — use these in pan-zoom actions
+- origin:       x: 5–95,   y: 5–70   → first response or reset
+- right:        x: 110–190, y: 5–70   → follow-up on same topic
+- far-right:    x: 215–285, y: 5–70   → third distinct topic / comparison
+- below:        x: 5–95,   y: 85–150  → deeper dive / step 2
+- below-right:  x: 110–190, y: 85–150 → cross-reference
+
+### Camera rules (FOLLOW THESE EXACTLY)
+1. canvas[0] is ALWAYS an orientation action. Never a bare spawn.
+   - New topic or reset: { "action": "despawn", "id": "*" } then { "action": "pan-zoom", "region": "origin" }
+   - Follow-up in new district: { "action": "pan-zoom", "region": "right" } (no despawn)
+2. New topic → despawn "*" first, then pan-zoom to origin.
+3. Follow-up / continuation → pan-zoom to right or below WITHOUT despawning.
+4. Summarising across multiple districts → end with { "action": "fit-all" }
+5. Per-turn area budget: max ~81 square units of widgets per response. Prefer fewer, richer widgets.
+
+### Widget coordinate reminder
+- Within origin (x: 0–100, y: 0–74): same as before.
+- Right district: x starts at 110. Example: x: 112, y: 10, w: 38, h: 50.
+- y + h ≤ 74 within each 100-unit vertical band (bottom 26 reserved for system UI).
+- Never place a widget beyond x: 290 or y: 290.
+```
 
 ---
 

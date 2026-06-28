@@ -16,6 +16,11 @@ body,
   -webkit-font-smoothing: antialiased;
 }
 
+/* Smooth 400ms camera transition during AI speech. Absent during user navigation. */
+.ai-camera {
+  transition: transform 400ms ease-in-out;
+}
+
 /* Full-screen black canvas with a subtle 1px dot grid (3% opacity) for depth. */
 .canvas-bg {
   background-color: #080808;
