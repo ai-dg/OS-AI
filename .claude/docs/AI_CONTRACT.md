@@ -1,159 +1,199 @@
-# AI Contract — Claude System Prompt & JSON Schema
+# AI Contract — Claude JSON Contract & Pipeline
 
 Loaded when working in `src/ai/`.
 
 ## Overview
-Every user voice input is sent to `claude-sonnet-4-6` with a structured system prompt. Claude must ALWAYS respond in a single JSON object. The `speech` field streams to the ticker; the `canvas` array is executed after the full response arrives.
+The app does **NOT** use AI-SDK tool calling. Claude returns **one streamed JSON object**;
+`converse.ts` parses it and mutates the Zustand `canvasStore` directly. The primary format is
+`{ speech, canvas }` where each `|`-separated speech segment is spoken (paced to its TTS clip)
+in lock-step with one canvas action, so voice and UI stay synchronised with no gaps.
+
+Two secondary formats are auto-detected for backward compatibility: a declarative `widgets`
+array and a dict-based **dynamic** format (Zod-validated). New work should target the primary
+`{ speech, canvas }` format.
+
+The school demo is primarily **scripted**: the linear demo steps are driven by `demoStore`,
+which calls `useCanvasStore.getState().spawn(...)` directly with pre-authored data — no Claude
+call. Live free-form questions (after the scripted demo) go through `converse()`.
 
 ---
 
-## API Call Config
+## Client Config
 
-```js
-// src/ai/claudeClient.js
-const response = await fetch('https://api.anthropic.com/v1/messages', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 1000,
-    stream: true,
-    system: SYSTEM_PROMPT,                // see below
-    messages: project.history,            // full history for active project
-    mcp_servers: [
-      {
-        type: 'url',
-        url: 'https://gmailmcp.googleapis.com/mcp/v1',
-        name: 'gmail'
-      }
-    ]
-  })
-})
+```ts
+// src/ai/client.ts
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY as string | undefined;
+export const hasApiKey = Boolean(apiKey);
+
+// Browser-side provider. The dangerous-direct-browser-access header lets the API
+// accept calls straight from the page — acceptable for a LOCAL DEMO ONLY, since
+// the key ships to the client.
+export const anthropic = createAnthropic({
+  apiKey: apiKey ?? "missing-key",
+  headers: { "anthropic-dangerous-direct-browser-access": "true" },
+});
+
+export const MODEL = "claude-sonnet-4-6";
 ```
-
-**Streaming strategy:**
-1. Buffer incoming chunks
-2. As soon as `"speech":"` is detected in buffer, begin streaming its value to the ticker character-by-character
-3. Once full JSON is received and parsed, execute `canvas` commands
-4. On JSON parse failure → emit `{ speech: rawText, canvas: [{ action:'spawn', type:'text-block', id:'fallback', x:30, y:30, w:40, h:20, data:{ body: rawText } }] }`
 
 ---
 
-## System Prompt Template
+## Conversation Pipeline
 
-> `src/ai/systemPrompt.js` exports this as a function that accepts `{ projectName, projectContext }`.
+```ts
+// src/ai/converse.ts (shape — see source for the full implementation)
+import { streamText, type ModelMessage } from "ai";
+import { anthropic, MODEL } from "./client";
+import { buildSystemPrompt } from "./systemPrompt";
+import { useProjectStore } from "@/projects/projectStore";
 
-```
-You are JARVIS, the AI core of an AI-native operating system interface. You control a full-screen black canvas by spawning and despawning visual widgets in real time as you speak. You have access to the user's Gmail via MCP tools.
+export async function converse(
+  history: ModelMessage[],
+  callbacks: ConverseCallbacks,
+): Promise<ConverseResult> {
+  const context = useProjectStore.getState().getActiveContext();
+  const result = streamText({
+    model: anthropic(MODEL),
+    system: buildSystemPrompt(context),
+    messages: history,
+    temperature: 0.7,
+  });
 
-CURRENT PROJECT: {{projectName}}
-PROJECT CONTEXT: {{projectContext}}
-
-RESPONSE FORMAT — CRITICAL:
-You MUST always respond with a single valid JSON object and nothing else. No markdown, no preamble, no explanation outside the JSON.
-
-{
-  "speech": "What you say out loud — one or two sentences max. This streams to the ticker in real time.",
-  "canvas": [ ...array of canvas commands... ]
+  // 1. Stream tokens; extract the partial `speech` field live for the ResponseBox.
+  // 2. Buffer the full text, then JSON.parse it.
+  // 3. Route by shape:
+  //      parsed.canvas (array)   → playSyncResponse()  — primary { speech, canvas } format
+  //      dict `widgets`          → dispatchDynamicCanvas() (Zod-validated)
+  //      array `widgets`         → dispatchWidgetDeclarations() (legacy)
+  // 4. On malformed JSON → spawn a fallback `text-block` so the canvas is never blank.
 }
+```
 
-CANVAS COMMANDS:
+### Callbacks (how text + audio stay in sync)
+```ts
+interface ConverseCallbacks {
+  onSentence: (sentence: string) => void;        // one completed sentence → TTS (fallback path)
+  onDelta?: (partial: string) => void;           // raw stream delta → live ticker
+  onSpeechDelta?: (speechText: string) => void;  // extracted speech grows → ResponseBox
+  // When provided, the sync path is AUDIO-DRIVEN: each segment's word-by-word text
+  // reveal and its canvas action are paced to the clip's duration, and the next
+  // segment is synthesized while the current plays (no gaps).
+  synthesize?: (text: string) => Promise<{ play(): Promise<void>; durationMs: number }>;
+}
+```
+`synthesize` is wired to `AudioSynthesisService` (ElevenLabs) in `App.tsx`. Without it,
+`converse` falls back to a fixed-pace timed reveal + queue-based TTS.
 
-Spawn a widget:
-{ "action": "spawn", "type": "<type>", "id": "<unique_id>", "x": <0-100>, "y": <0-100>, "w": <0-100>, "h": <0-100>, "data": { ...type-specific... } }
+---
 
-Despawn a widget:
-{ "action": "despawn", "id": "<id>" }
+## Primary format — `{ speech, canvas }`
 
-Clear all widgets:
-{ "action": "clear" }
-
-Zoom into a widget:
-{ "action": "zoom", "targetId": "<id>", "scale": <1.0-2.0> }
-
-Reset zoom:
-{ "action": "zoom-out" }
-
-Spotlight (vignette without zoom):
-{ "action": "spotlight", "targetId": "<id>" }
-
-WIDGET TYPES AND DATA SCHEMAS:
-
-text-block: { title?: string, body: string, accent?: string }
-bullet-list: { title?: string, items: string[], staggerMs?: number }
-stat-card: { value: string, label: string, trend?: string }
-code-block: { language: string, code: string, filename?: string }
-arrow: { fromId: string, toId: string, label?: string, color?: string }
-highlight-overlay: { color: string, label?: string }
-progress-bar: { label: string, value: number, color?: string }
-image-placeholder: { label: string, icon?: string }
-email-ui: { from: string, email: string, subject: string, preview: string, timestamp: string, unread: boolean }
-
-CANVAS LAYOUT RULES:
-- x, y, w, h are PERCENTAGES of the canvas (0–100)
-- Leave a margin: don't place widgets within 5% of any edge
-- Avoid overlapping widgets unless using highlight-overlay
-- The ticker is at the top — don't place widgets in the top 12% of the canvas
-- The conversation tree is at the bottom — don't place widgets in the bottom 10%
-- Typical widget sizes: text-block 30x20, stat-card 18x18, code-block 40x28, email-ui 38x18
-
-BEHAVIOUR RULES:
-- Clear stale widgets before spawning a new set: use "despawn" for individual ones or "clear" for all
-- Use zoom to emphasise the most important widget, then zoom-out before spawning new content
-- Keep speech short — one or two clear sentences that match what you're showing
-- If asked about emails, use the Gmail MCP tool first, then spawn email-ui widgets with real data
-- Spawn multiple email-ui widgets with sequential ids: email-1, email-2, email-3
-- Arrows should only connect widgets that are currently spawned
-
-EXAMPLE RESPONSE:
+```json
 {
-  "speech": "You have three unread messages this morning. Let me show you.",
+  "speech": "Loading your view.|Here are the latest emails.|The top one is urgent.|Zooming in.",
   "canvas": [
-    { "action": "clear" },
-    { "action": "spawn", "type": "stat-card", "id": "count", "x": 10, "y": 25, "w": 18, "h": 18, "data": { "value": "3", "label": "unread emails" } },
-    { "action": "spawn", "type": "email-ui", "id": "email-1", "x": 32, "y": 20, "w": 38, "h": 16, "data": { "from": "Alice Martin", "email": "alice@company.com", "subject": "Q3 Review deck", "preview": "Hi, attached is the updated deck for tomorrow's...", "timestamp": "1h ago", "unread": true } },
-    { "action": "spawn", "type": "email-ui", "id": "email-2", "x": 32, "y": 40, "w": 38, "h": 16, "data": { "from": "Thomas Lee", "email": "thomas@company.com", "subject": "Re: API access", "preview": "The tokens are ready, let me know if...", "timestamp": "3h ago", "unread": true } },
-    { "action": "zoom", "targetId": "email-1", "scale": 1.4 }
+    { "action": "despawn", "id": "*" },
+    { "action": "spawn", "type": "email-ui", "id": "email-1", "x": 8, "y": 10, "w": 48, "h": 36, "data": { "from": "…", "subject": "…", "previewText": "…", "timestamp": "9:14 AM" } },
+    { "action": "spawn", "type": "bullet-list", "id": "inbox", "x": 60, "y": 10, "w": 35, "h": 50, "data": { "items": ["…"] } },
+    { "action": "zoom",  "targetId": "email-1", "scale": 1.3 }
   ]
 }
 ```
 
+Synchronisation rules (enforced by the system prompt, consumed by `playSyncResponse`):
+- `speech` comes **first**; `|` marks segment boundaries. **#segments === #canvas actions.**
+- Segment *i* is spoken while `canvas[i]` paints. Keep each segment ≤ 12 words.
+- `canvas[0]` is almost always `{ "action": "despawn", "id": "*" }` (clear) with a short
+  transition segment (`"Loading your view."`).
+- `x, y, w, h` are plain-number percentages (no `%`). **`y + h ≤ 74`** (bottom 26% reserved).
+
+### Canvas actions (`SyncCanvasAction` → `canvasStore`)
+| action | fields | store call |
+|---|---|---|
+| `spawn` | `type, id, x, y, w, h, data` | `spawn({ … })` (friendly type mapped to internal `WidgetType`) |
+| `despawn` | `id` (or `"*"`) | `despawn(id)` / `clear()` |
+| `zoom` | `targetId, scale` | `zoomCamera(targetId, scale)` |
+
+Friendly→internal type map lives in `converse.ts` (`SYNC_TYPE_MAP`) and `orchestrate.ts`
+(`TYPE_MAP`): `text-block→card`, `bullet-list→bullets`, `stat-card→stat`, `code-block→code`;
+specialised types (`highlight-overlay`, `progress-bar`, `image-placeholder`, `email-ui`,
+`network-graph`, `circle-stat`, `image-widget`) pass through.
+
 ---
 
-## Streaming Parse Strategy
+## Secondary formats (auto-detected)
 
-```js
-// src/ai/streamParser.js
-export function parseStream(chunk, buffer, callbacks) {
-  buffer += chunk
+- **Dynamic dict format** — `widgets` is a `Record<id, decl>` (not an array). Validated by
+  `dynamicCanvasResponseSchema` in `widgets/dynamicSchema.ts` (permissive: unknown enums
+  `.catch()` to safe defaults), dispatched by `dispatchDynamicCanvas()`. Renders via
+  `DynamicWidgetFactory`.
+- **Legacy declarative `widgets` array** — Visual Translation Framework shape
+  (`{ id, type, position:{top,left,width,height}, props }`). Dispatched by
+  `dispatchWidgetDeclarations()`; supports a `staggerMs` for column reveals.
 
-  // Stream speech field in real time
-  if (!callbacks.speechStarted) {
-    const speechMatch = buffer.match(/"speech"\s*:\s*"((?:[^"\\]|\\.)*)/)
-    if (speechMatch) {
-      callbacks.onSpeechChunk(speechMatch[1])
-      callbacks.speechStarted = true
-    }
-  } else if (!callbacks.speechDone) {
-    // Continue streaming until closing quote (not escaped)
-    const afterSpeech = buffer.match(/"speech"\s*:\s*"((?:[^"\\]|\\.)*)"/)
-    if (afterSpeech) {
-      callbacks.onSpeechComplete(afterSpeech[1])
-      callbacks.speechDone = true
-    }
-  }
+An optional `camera` field (`{ action: "zoom"|"zoom-out"|"spotlight", target_widget_id, scale }`)
+is dispatched by `dispatchCameraAction()`.
 
-  // Try to parse complete JSON once buffer looks complete
-  if (buffer.trimEnd().endsWith('}')) {
-    try {
-      const parsed = JSON.parse(buffer)
-      callbacks.onCanvasCommands(parsed.canvas || [])
-      return { done: true, buffer }
-    } catch {
-      // Not yet complete — keep buffering
-    }
-  }
+---
 
-  return { done: false, buffer }
+## System Prompt
+
+`buildSystemPrompt(projectContext?)` (`src/ai/systemPrompt.ts`) returns the static
+`SYSTEM_PROMPT` (JARVIS persona, the JSON-contract spec, the full widget catalog with size
+guides, layout patterns, and constraints) and appends the active project's context string when
+provided. For the school demo, the project context comes from `projectStore.getActiveContext()`,
+which lists the active class, teacher (name + email), and homework with computed progress.
+
+When adding a widget Claude is allowed to spawn, add a catalog entry here (friendly type name,
+`data` schema, size guide, one example) — keep it in sync with `widgets/types.ts` and
+`widgets/registry.tsx`.
+
+Demo-relevant guidance to keep in the prompt:
+- Speech: 1–2 short sentences per segment, matching what's shown.
+- Always clear (`despawn "*"`) before a new topic.
+- For "send work to my teacher": pre-fill `mail-compose` from the project's teacher data and
+  confirm before the Gmail MCP send.
+- QCM: never reveal correct answers before the student submits.
+- Lesson: narrate one beat at a time; wait for confirmation before the next beat.
+
+---
+
+## Gmail MCP Integration
+
+`src/ai/gmailMCP.ts` connects Gmail through the `mcp_servers` param on a **raw Anthropic
+Messages API call** (not the AI-SDK stream). Required beta header: `mcp-client-2025-04-04`.
+
+```ts
+// Example request body
+{
+  model:       "claude-sonnet-4-6",
+  max_tokens:  8096,
+  system:      SYSTEM_PROMPT,
+  mcp_servers: GMAIL_MCP_SERVERS,   // url-type server entry
+  messages:    [...],
 }
 ```
+
+Two paths:
+1. `converseWithGmail()` — real call with `mcp_servers`; Anthropic's backend handles the
+   OAuth-authenticated Gmail MCP connection and Claude receives inbox JSON automatically.
+2. `triggerMockGmailMCPResponse()` — spawns 5 hardcoded emails in a staggered column
+   (5 cards × 16% height, 2% gap, from `y=4%`, `x=8%`, `w=42%`) for instant demo use with no
+   key/OAuth.
+
+**Send (Step 3 of the demo):** the `mail-compose` widget is pre-filled by the scripted demo
+state. On Send, fire the Gmail MCP `send_email` tool best-effort. **If it fails (auth/network),
+still play the "sent" animation** — the visual is what matters for the demo. Log the error
+silently. The attachment is virtual (no real PDF is generated).
+
+---
+
+## Error Recovery
+
+If the API call fails or returns malformed JSON:
+1. `converse.ts` spawns a fallback `text-block` with the raw text — canvas is never blank.
+2. For scripted steps, show the pre-authored ticker text for that step (from `demoStore`),
+   keep the canvas as-is, and advance manually.
+3. Never show an error state to the user. Scripted states are indistinguishable from live calls.
