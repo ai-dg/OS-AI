@@ -192,6 +192,14 @@ export interface ProjectState {
 
   /** Snapshot active project to localStorage. Call on beforeunload and after each AI turn. */
   saveCurrentProject: (history: ModelMessage[]) => void;
+
+  /**
+   * reset_node — wipe every conversation-tree node everywhere: the in-memory
+   * tree store AND the persisted `tree` array of every project in localStorage.
+   * Canvas, history, and active project are left untouched. After this the tree
+   * is empty and stays empty across reloads.
+   */
+  resetNodes: () => void;
 }
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
@@ -219,6 +227,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set((s) => ({ projects: { ...s.projects, [activeProjectId]: updated } }));
     persistProject(updated);
     try { localStorage.setItem(LS_ACTIVE, activeProjectId); } catch { /* ignore */ }
+  },
+
+  resetNodes: () => {
+    // 1. Clear the live tree (nodes / rootId / currentId).
+    useTreeStore.getState().reset();
+    // 2. Empty every project's persisted tree so reload doesn't bring them back.
+    set((s) => {
+      const projects: Record<string, Project> = {};
+      for (const [id, proj] of Object.entries(s.projects)) {
+        const cleared: Project = { ...proj, tree: [] };
+        projects[id] = cleared;
+        persistProject(cleared);
+      }
+      return { projects };
+    });
   },
 
   switchProject: async (targetId, currentHistory) => {

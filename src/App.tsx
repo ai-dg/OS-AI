@@ -66,6 +66,7 @@ export default function App() {
   const isSwitching   = useProjectStore((s) => s.isSwitching);
   const switchProject = useProjectStore((s) => s.switchProject);
   const saveProject   = useProjectStore((s) => s.saveCurrentProject);
+  const resetNodes    = useProjectStore((s) => s.resetNodes);
   const projects      = useProjectStore((s) => s.projects);
 
   // ── Restore active project canvas on first mount ──────────────────────────
@@ -111,6 +112,16 @@ export default function App() {
       return next;
     });
   }, []);
+
+  // ── reset_node ────────────────────────────────────────────────────────────
+  // Delete every conversation-tree node — in-memory and persisted across all
+  // projects. Destructive + survives reload, so confirm first.
+  const handleResetNodes = useCallback(() => {
+    if (!window.confirm("Delete every node? This clears the conversation tree across all projects and cannot be undone.")) {
+      return;
+    }
+    resetNodes();
+  }, [resetNodes]);
 
   // ── Main utterance handler ────────────────────────────────────────────────
   const handleUtterance = useCallback(async (text: string) => {
@@ -219,6 +230,17 @@ export default function App() {
       >
         <span aria-hidden>{muted ? "🔇" : "🔊"}</span>
         {muted ? "Voice off" : "Voice on"}
+      </button>
+
+      {/* reset_node — wipe every conversation-tree node (in-memory + persisted). */}
+      <button
+        type="button"
+        onClick={handleResetNodes}
+        title="Delete every conversation-tree node across all projects"
+        className="fixed bottom-5 right-32 z-40 flex items-center gap-2 rounded-full border border-red-400/30 bg-red-400/5 px-3 py-1.5 text-xs text-red-300 transition-all duration-300 hover:bg-red-400/15"
+      >
+        <span aria-hidden>🗑</span>
+        Reset nodes
       </button>
 
       {/* While listening, the box mirrors the live transcript of the user's
