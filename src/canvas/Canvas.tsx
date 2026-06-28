@@ -419,8 +419,8 @@ export function Canvas({ onSubmit, isThinking, chatBusy, voiceLevelRef }: Canvas
       </AnimatePresence>
 
       {/* ── UI chrome ─────────────────────────────────────────────────────── */}
-      {/* Hidden for now: bottom typing bar (push-to-talk voice only). */}
-      {false && <ChatBox onSubmit={onSubmit} isThinking={chatBusy} />}
+      {/* Visible for now: bottom typing bar (push-to-talk voice only). */}
+      <ChatBox onSubmit={onSubmit} isThinking={chatBusy} />
       {/* Hidden: top-right camera/demo control bar (Zoom · Spotlight · Reset view · Gmail demo) */}
       {false && <DemoController />}
     </div>
