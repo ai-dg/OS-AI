@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ModelMessage } from "ai";
 import { Canvas } from "@/canvas/Canvas";
 import { ResponseBox } from "@/components/ResponseBox";
-import { ProjectLabel } from "@/components/ProjectLabel";
 import { DemoControls } from "@/components/DemoControls";
 import { ConversationTree } from "@/tree/ConversationTree";
 import { JarvisOrb } from "@/components/JarvisOrb";
@@ -319,7 +318,6 @@ export default function App() {
         }
         voiceLevelRef={levelRef}
       />
-      <ProjectLabel />
       <ConversationTree />
       <DemoControls />
 
